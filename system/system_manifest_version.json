@@ -2,6 +2,16 @@
   "project_identity": "Visual Empathy Assistant",
   "history": [
     {
+      "version": "11.0.0",
+      "date": "2026-02-22",
+      "codename": "Omni-Intelligence",
+      "logs": [
+        "RELEASE: Omni-Intelligence - Phiên bản hoàn thiện tích hợp toàn diện Gemini 3.1 Pro và Gemini 3 Flash.",
+        "UX: API Key Setup - Thêm nút thiết lập API Key trực tiếp trên thanh công cụ.",
+        "LIVE: Device Error Handling - Xử lý mượt mà lỗi không tìm thấy thiết bị Microphone trong Live Mode."
+      ]
+    },
+    {
       "version": "10.3.0",
       "date": "2026-02-22",
       "codename": "Gemini-3-Titan",

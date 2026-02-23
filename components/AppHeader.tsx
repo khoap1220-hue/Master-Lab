@@ -47,7 +47,7 @@ const AppHeader: React.FC<AppHeaderProps> = ({
             Master <span className="text-blue-500 group-hover:text-white">Intelligence</span>
           </h1>
           <div className="hidden lg:flex items-center gap-1.5">
-             <span className="px-2 py-0.5 rounded bg-blue-500/10 border border-blue-500/20 text-[8px] font-black text-blue-400 uppercase tracking-widest">v10.3.0-Titan</span>
+             <span className="px-2 py-0.5 rounded bg-blue-500/10 border border-blue-500/20 text-[8px] font-black text-blue-400 uppercase tracking-widest">v11.0.0-Omni</span>
              {isEnsemble && <span className="px-2 py-0.5 rounded bg-orange-500/10 border border-orange-500/20 text-[8px] font-black text-orange-400 uppercase animate-pulse">Synergy Active</span>}
           </div>
         </div>
@@ -66,6 +66,16 @@ const AppHeader: React.FC<AppHeaderProps> = ({
       </div>
 
       <div className="flex gap-2 md:gap-4">
+         <button 
+           onClick={() => (window as any).aistudio?.openSelectKey?.()} 
+           className="px-4 py-2 rounded-xl border border-white/10 bg-slate-800/40 text-slate-400 hover:text-white hover:bg-slate-800 text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2"
+           title="Thiết lập Gemini API Key"
+         >
+           <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+           </svg>
+           <span className="hidden sm:inline">API Key</span>
+         </button>
          <button 
            onClick={onShowMemory} 
            className={`px-4 py-2 rounded-xl border text-[10px] font-black uppercase tracking-widest transition-all ${showMemory ? 'bg-orange-600 border-orange-400 text-white shadow-lg shadow-orange-900/40' : 'bg-slate-800/40 border-white/10 text-slate-400 hover:text-white hover:bg-slate-800'}`}

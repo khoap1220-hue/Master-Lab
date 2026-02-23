@@ -12,7 +12,7 @@ interface ViralStoryDashboardProps {
 }
 
 const ViralStoryDashboard: React.FC<ViralStoryDashboardProps> = ({ job, onGenerateVideo, onSelectHook, onDeselectHook, onGenerateQuoteImage, isRendering }) => {
-  const [activeTab, setActiveTab] = useState<'video' | 'social' | 'quotes'>('video');
+  const [activeTab, setActiveTab] = useState<'video' | 'social' | 'quotes' | 'lab'>('video');
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
 
   if (!job.viralPlan) return null;
@@ -44,6 +44,12 @@ const ViralStoryDashboard: React.FC<ViralStoryDashboardProps> = ({ job, onGenera
                   className={`px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'quotes' ? 'bg-pink-600 text-white shadow' : 'text-slate-500 hover:text-white'}`}
               >
                   {(job.viralPlan?.instagramQuotes || []).length} Quotes
+              </button>
+              <button 
+                  onClick={() => setActiveTab('lab')}
+                  className={`px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === 'lab' ? 'bg-emerald-600 text-white shadow' : 'text-slate-500 hover:text-white'}`}
+              >
+                  Viral Lab
               </button>
           </div>
       </div>
@@ -332,8 +338,180 @@ const ViralStoryDashboard: React.FC<ViralStoryDashboardProps> = ({ job, onGenera
         {activeTab === 'video' && renderVideoTab()}
         {activeTab === 'social' && renderSocialTab()}
         {activeTab === 'quotes' && renderQuotesTab()}
+        {activeTab === 'lab' && <ViralLab />}
     </div>
   );
+};
+
+// --- VIRAL LAB COMPONENT ---
+const ViralLab = () => {
+    const [input, setInput] = useState('');
+    const [result, setResult] = useState('');
+    const [isLoading, setIsLoading] = useState(false);
+    const [activeTool, setActiveTool] = useState<string | null>(null);
+
+    const runAnalysis = async (promptType: string) => {
+        if (!input) return;
+        setIsLoading(true);
+        setActiveTool(promptType);
+        setResult('');
+        
+        try {
+            const { getAI } = await import('../../../lib/gemini');
+            const ai = getAI();
+            
+            let prompt = '';
+            let useSearch = false;
+
+            switch (promptType) {
+                case 'analyze_competitor':
+                    prompt = `Hãy đóng vai chuyên gia sáng tạo nội dung, phân tích video này về: 3 giây đầu (Hook), nhịp dựng, cách sắp xếp âm thanh và lý do tại sao người xem lại bình luận nhiều đến vậy. Link/Data: ${input}`;
+                    useSearch = true;
+                    break;
+                case 'extract_script':
+                    prompt = `Viết lại toàn bộ lời thoại và mô tả từng phân cảnh (scene-by-scene) của video này để tôi học tập cấu trúc. Link/Data: ${input}`;
+                    useSearch = true;
+                    break;
+                case 'optimize_hook':
+                    prompt = `Viết 5 tiêu đề và 5 câu thoại mở đầu ấn tượng cho chủ đề sau để giữ chân người xem ngay lập tức: ${input}`;
+                    break;
+                case 'suggest_pacing':
+                    prompt = `Với các đoạn footage thô sau đây, hãy sắp xếp thứ tự và chỉ ra những điểm cần cắt tỉa để video có nhịp điệu nhanh, cuốn hút theo phong cách TikTok/Reels: ${input}`;
+                    break;
+                case 'evaluate_edit':
+                    prompt = `Hãy đánh giá bản dựng video này dưới góc độ chuyên gia. Nhận xét về độ mượt, màu sắc và âm thanh. Chỗ nào cần chỉnh để tăng tỷ lệ giữ chân người xem (retention rate)? Data/Link: ${input}`;
+                    useSearch = true;
+                    break;
+            }
+
+            const response = await ai.models.generateContent({
+                model: 'gemini-3.1-pro-preview',
+                contents: prompt,
+                config: {
+                    tools: useSearch ? [{ googleSearch: {} }] : []
+                }
+            });
+
+            setResult(response.text || 'Không có kết quả.');
+        } catch (error: any) {
+            console.error(error);
+            setResult(`Lỗi: ${error.message}`);
+        } finally {
+            setIsLoading(false);
+            setActiveTool(null);
+        }
+    };
+
+    return (
+        <div className="space-y-8 animate-in slide-in-from-right-6 pb-20 max-w-5xl mx-auto">
+            <div className="text-center space-y-3 mb-8">
+                <h3 className="text-2xl font-black text-white uppercase tracking-tighter">Viral Lab & Post-Production</h3>
+                <p className="text-[10px] text-slate-400 max-w-lg mx-auto">Phân tích "Mã Gen" video lan truyền và tối ưu hóa hậu kỳ với chuyên gia AI.</p>
+            </div>
+
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-6">
+                <textarea 
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    placeholder="Nhập Link Video TikTok/Facebook, chủ đề, hoặc mô tả footage thô..."
+                    className="w-full h-32 bg-slate-950 border border-slate-800 rounded-2xl p-4 text-sm text-white focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 outline-none resize-none custom-scrollbar"
+                />
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {/* Phân tích Mã Gen */}
+                    <div className="space-y-3">
+                        <h4 className="text-[10px] font-black text-emerald-500 uppercase tracking-widest flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                            1. Phân tích "Mã Gen" (Dùng Google Search)
+                        </h4>
+                        <div className="grid grid-cols-1 gap-2">
+                            <button 
+                                onClick={() => runAnalysis('analyze_competitor')}
+                                disabled={isLoading}
+                                className="p-3 bg-slate-800 hover:bg-slate-700 rounded-xl text-left transition-all border border-slate-700 hover:border-emerald-500/50 group"
+                            >
+                                <div className="text-xs font-bold text-white mb-1 group-hover:text-emerald-400">Phân tích Video đối thủ</div>
+                                <div className="text-[9px] text-slate-400">Phân tích Hook, nhịp dựng, âm thanh và lý do viral.</div>
+                            </button>
+                            <button 
+                                onClick={() => runAnalysis('extract_script')}
+                                disabled={isLoading}
+                                className="p-3 bg-slate-800 hover:bg-slate-700 rounded-xl text-left transition-all border border-slate-700 hover:border-emerald-500/50 group"
+                            >
+                                <div className="text-xs font-bold text-white mb-1 group-hover:text-emerald-400">Trích xuất kịch bản</div>
+                                <div className="text-[9px] text-slate-400">Viết lại lời thoại và mô tả từng phân cảnh (scene-by-scene).</div>
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Chuyên gia Hậu kỳ */}
+                    <div className="space-y-3">
+                        <h4 className="text-[10px] font-black text-blue-500 uppercase tracking-widest flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full bg-blue-500"></span>
+                            2. Chuyên gia Hậu kỳ
+                        </h4>
+                        <div className="grid grid-cols-1 gap-2">
+                            <button 
+                                onClick={() => runAnalysis('optimize_hook')}
+                                disabled={isLoading}
+                                className="p-3 bg-slate-800 hover:bg-slate-700 rounded-xl text-left transition-all border border-slate-700 hover:border-blue-500/50 group"
+                            >
+                                <div className="text-xs font-bold text-white mb-1 group-hover:text-blue-400">Tối ưu Hook (3s đầu)</div>
+                                <div className="text-[9px] text-slate-400">Viết 5 tiêu đề và 5 câu thoại mở đầu ấn tượng.</div>
+                            </button>
+                            <button 
+                                onClick={() => runAnalysis('suggest_pacing')}
+                                disabled={isLoading}
+                                className="p-3 bg-slate-800 hover:bg-slate-700 rounded-xl text-left transition-all border border-slate-700 hover:border-blue-500/50 group"
+                            >
+                                <div className="text-xs font-bold text-white mb-1 group-hover:text-blue-400">Đề xuất nhịp dựng (Pacing)</div>
+                                <div className="text-[9px] text-slate-400">Sắp xếp footage thô để có nhịp điệu nhanh, cuốn hút.</div>
+                            </button>
+                            <button 
+                                onClick={() => runAnalysis('evaluate_edit')}
+                                disabled={isLoading}
+                                className="p-3 bg-slate-800 hover:bg-slate-700 rounded-xl text-left transition-all border border-slate-700 hover:border-blue-500/50 group"
+                            >
+                                <div className="text-xs font-bold text-white mb-1 group-hover:text-blue-400">Đánh giá bản dựng</div>
+                                <div className="text-[9px] text-slate-400">Nhận xét độ mượt, màu sắc, âm thanh để tăng retention rate.</div>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {/* Result Area */}
+            {(isLoading || result) && (
+                <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 animate-in fade-in zoom-in-95 duration-300">
+                    <div className="flex items-center gap-3 mb-4 pb-4 border-b border-slate-800">
+                        {isLoading ? (
+                            <div className="w-4 h-4 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
+                        ) : (
+                            <span className="text-emerald-500">✨</span>
+                        )}
+                        <h4 className="text-xs font-black text-white uppercase tracking-widest">
+                            {isLoading ? 'Đang phân tích...' : 'Kết quả phân tích'}
+                        </h4>
+                    </div>
+                    
+                    <div className="prose prose-invert prose-sm max-w-none">
+                        {isLoading ? (
+                            <div className="space-y-2 animate-pulse">
+                                <div className="h-4 bg-slate-800 rounded w-3/4"></div>
+                                <div className="h-4 bg-slate-800 rounded w-full"></div>
+                                <div className="h-4 bg-slate-800 rounded w-5/6"></div>
+                                <div className="h-4 bg-slate-800 rounded w-1/2"></div>
+                            </div>
+                        ) : (
+                            <div className="text-slate-300 whitespace-pre-wrap leading-relaxed font-sans">
+                                {result}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+        </div>
+    );
 };
 
 export default ViralStoryDashboard;
