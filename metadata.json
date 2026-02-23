@@ -1,0 +1,8 @@
+{
+  "name": "Tiệm Ảnh Master Intelligence - Gemini 3.1 Pro",
+  "description": "An interactive visual conversation space powered by Gemini 3.1 Pro, allowing users to edit images through natural dialogue and intuitive drawing.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}

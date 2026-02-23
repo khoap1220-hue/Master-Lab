@@ -1,0 +1,38 @@
+
+{
+  "registry_name": "System Agent Code (The Debugger's Log)",
+  "purpose": "Kho lưu trữ trung tâm để phân tích lỗi, đề xuất giải pháp và theo dõi trạng thái khắc phục.",
+  "protocol": "DETECT -> ANALYZE -> PATCH -> VERIFY",
+  "incident_log": [
+    {
+      "id": "INC-2025-030",
+      "timestamp": "2025-07-10T09:00:00Z",
+      "severity": "HIGH",
+      "context": "System Wide / Quality",
+      "error_signature": "AI Laziness / Generic Responses.",
+      "root_cause_analysis": "Mô hình ngôn ngữ có xu hướng chọn con đường ít tốn năng lượng nhất (trả lời ngắn, chung chung) để tiết kiệm token và thời gian.",
+      "resolution_strategy": "Kích hoạt 'Deep-Work Protocol': Tăng Thinking Budget lên tối đa (32k), Cấm các từ khóa chung chung, Yêu cầu độ chi tiết vật lý (Physicality) cao.",
+      "status": "RESOLVED",
+      "affected_files": [
+        "services/prompts/index.ts",
+        "services/orchestrator/analysis.ts",
+        "services/pixel/editing.ts"
+      ]
+    },
+    {
+      "id": "INC-2025-025",
+      "timestamp": "2025-07-08T14:20:00Z",
+      "severity": "MEDIUM",
+      "context": "Performance / Browser",
+      "error_signature": "Browser Out of Memory (OOM) crash on long sessions.",
+      "root_cause_analysis": "Lưu trữ quá nhiều chuỗi Base64 ảnh 4K trong React State (History) mà không giải phóng.",
+      "resolution_strategy": "Implement 'Neural Garbage Collector'. Chỉ giữ lại 8 ảnh gần nhất trong RAM, các ảnh cũ bị xóa data nhưng giữ lại metadata.",
+      "status": "RESOLVED",
+      "affected_files": [
+        "hooks/useChat.ts"
+      ]
+    }
+  ],
+  "active_investigation": null,
+  "notes": "Hệ thống v9.1.0 tập trung vào chất lượng đầu ra (Quality Assurance) và chiều sâu tư duy."
+}
