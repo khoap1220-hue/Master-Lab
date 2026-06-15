@@ -60,9 +60,33 @@ export const executeProjectPlanningFlow = async (
          const plan = await orchestratorService.planProductUX(text, "System/App", "User");
          researchResult = { visualPrompt: plan.visualPrompt, sources: [], structuredBrief: plan.structuredBrief };
     }
+    else if (category === 'Interior Design') {
+         const plan = await orchestratorService.planInteriorProject(text, "3D Render");
+         researchResult = { visualPrompt: plan.visualPrompt, sources: [], structuredBrief: plan.structuredBrief };
+    }
+    else if (category === 'Character Design') {
+         const plan = await orchestratorService.planCharacterDesign(text, "Fantasy");
+         researchResult = { visualPrompt: plan.visualPrompt, sources: [], structuredBrief: plan.structuredBrief };
+    }
+    else if (category === 'App Icon Design') {
+         const plan = await orchestratorService.planAppIconDesign(text, "Glassmorphism");
+         researchResult = { visualPrompt: plan.visualPrompt, sources: [], structuredBrief: plan.structuredBrief };
+    }
+    else if (category === '3D Rendering') {
+         const plan = await orchestratorService.plan3DRender(text, "Product Shot");
+         researchResult = { visualPrompt: plan.visualPrompt, sources: [], structuredBrief: plan.structuredBrief };
+    }
+    else if (category === 'Vector Art') {
+         const plan = await orchestratorService.planVectorArt(text, "Flat Illustration");
+         researchResult = { visualPrompt: plan.visualPrompt, sources: [], structuredBrief: plan.structuredBrief };
+    }
+    else if (category === 'Cinematic Video') {
+         const plan = await orchestratorService.planCinematicVideo(text, "16:9");
+         researchResult = { visualPrompt: plan.visualPrompt, sources: [], structuredBrief: plan.structuredBrief };
+    }
     else {
          // Default Product/Branding Research
-         const research = await orchestratorService.researchProductTrends(text, memory);
+         const research = await orchestratorService.researchProductTrends(text, memory, category);
          researchResult = research;
     }
 
@@ -82,6 +106,12 @@ export const executeProjectPlanningFlow = async (
     else if (category === 'Multimedia') actionLabel = 'TẠO KEY VISUAL 🎬';
     else if (category === 'Style Transfer') actionLabel = 'BIẾN ĐỔI PHONG CÁCH 🪄';
     else if (category === 'UX/UI Design') actionLabel = 'THIẾT KẾ UI SYSTEM 🖥️';
+    else if (category === 'Interior Design') actionLabel = 'RENDER NỘI THẤT 🛋️';
+    else if (category === 'Character Design') actionLabel = 'VẼ NHÂN VẬT 👤';
+    else if (category === 'App Icon Design') actionLabel = 'RENDER ICON 🖼️';
+    else if (category === '3D Rendering') actionLabel = 'RENDER 3D 🧊';
+    else if (category === 'Vector Art') actionLabel = 'VẼ VECTOR ✒️';
+    else if (category === 'Cinematic Video') actionLabel = 'TẠO CẢNH QUAY 🎥';
 
     return {
         text: isDocsOnly 

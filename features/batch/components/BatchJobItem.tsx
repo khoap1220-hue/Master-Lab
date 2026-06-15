@@ -1,12 +1,13 @@
 
 import React, { useState, useEffect } from 'react';
 import { BatchJob } from '../../../types';
+import { Button } from '../../../components/ui/Button';
 
 export interface BatchJobItemProps {
   job: BatchJob;
   activeJobId: string | null;
   setActiveJobId: (id: string) => void;
-  mode: 'remove-bg' | 'upscale' | 'print-prep' | 'auto-mockup' | 'decompose' | 'localize' | 'font-creation' | 'vectorize' | 'product-360' | 'viral-story';
+  mode: 'remove-bg' | 'upscale' | 'print-prep' | 'auto-mockup' | 'decompose' | 'localize' | 'font-creation' | 'vectorize' | 'product-360' | 'viral-story' | 'studio-videos' | string;
   onRemove: (id: string) => void;
 }
 
@@ -45,11 +46,16 @@ const BatchJobItem: React.FC<BatchJobItemProps> = ({ job, activeJobId, setActive
     
     if (job.status === 'scripting') return { text: job.progressMessage || 'Brainstorming...', color: 'text-indigo-400', icon: '📝' };
     if (job.status === 'rendering_video') return { text: job.progressMessage || 'Rendering...', color: 'text-red-400', icon: '🎬' };
+    if (job.status === 'generating_video') return { text: job.progressMessage || 'Generating Video...', color: 'text-purple-400', icon: '🎬' };
 
+    if (job.status === 'processing') return { text: job.progressMessage || 'Processing...', color: 'text-blue-400', icon: '⚙️' };
     if (job.status === 'refining') return { text: 'Refining...', color: 'text-orange-400', icon: '✨' };
     if (job.status === 'matting') return { text: 'Masking...', color: 'text-cyan-400', icon: '🖌️' };
     
     if (job.status === 'completed') {
+        if (job.resultVideoUrl) {
+            return { text: 'Video Ready', color: 'text-green-400', icon: '🎥' };
+        }
         if (job.extractedAssets && job.extractedAssets.length > 0) {
             return { text: `${job.extractedAssets.length} Assets Found`, color: 'text-green-400', icon: '✅' };
         }
@@ -62,11 +68,11 @@ const BatchJobItem: React.FC<BatchJobItemProps> = ({ job, activeJobId, setActive
         return { text: 'Complete', color: 'text-green-400', icon: '✅' };
     }
     
-    return { text: 'Queued', color: 'text-slate-600', icon: '•' };
+    return { text: 'Queued', color: 'text-zinc-600', icon: '•' };
   };
 
   const status = getStatusDisplay(job);
-  const isJobRunning = ['preprocessing', 'matting', 'refining', 'analyzing_context', 'placing_neural', 'decomposing', 'localizing', 'vectorizing', 'scripting', 'rendering_video', 'visualizing_hooks', 'drafting_content', 'rendering_visuals'].includes(job.status);
+  const isJobRunning = ['preprocessing', 'matting', 'refining', 'analyzing_context', 'placing_neural', 'decomposing', 'localizing', 'vectorizing', 'scripting', 'rendering_video', 'generating_video', 'visualizing_hooks', 'drafting_content', 'rendering_visuals', 'processing'].includes(job.status);
   const radius = 14;
   const circumference = 2 * Math.PI * radius;
 
@@ -74,20 +80,30 @@ const BatchJobItem: React.FC<BatchJobItemProps> = ({ job, activeJobId, setActive
     <div 
       className={`group relative p-3 rounded-xl flex items-center gap-3 cursor-pointer border transition-all ${
         activeJobId === job.id 
-        ? 'bg-slate-900 border-slate-700 shadow-lg ring-1 ring-slate-700' 
-        : 'bg-transparent border-transparent hover:bg-slate-800/50 hover:border-slate-800'
+        ? 'bg-zinc-900 border-zinc-700 shadow-lg ring-1 ring-zinc-700' 
+        : 'bg-transparent border-transparent hover:bg-zinc-800/50 hover:border-zinc-800'
       }`}
       onClick={() => !isConfirmingDelete && setActiveJobId(job.id)}
     >
-      <div className="w-12 h-12 rounded-lg bg-black/40 overflow-hidden flex-shrink-0 border border-slate-700 relative">
-        <img src={job.resultUrl || job.thumbnailUrl} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" alt="thumbnail" />
+      <div className="w-12 h-12 rounded-lg bg-black/40 overflow-hidden flex-shrink-0 border border-zinc-700 relative">
+        {job.file && job.file.type.startsWith('video/') ? (
+            <video src={job.resultVideoUrl || job.resultUrl || job.thumbnailUrl} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" muted playsInline />
+        ) : (
+            <img src={job.resultUrl || job.thumbnailUrl} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" alt="thumbnail" />
+        )}
+        
+        {job.referenceUrls && job.referenceUrls.length > 0 && !isJobRunning && (
+            <div className="absolute bottom-0 right-0 bg-purple-600 text-white text-[8px] font-bold px-1 rounded-tl-md">
+                +{job.referenceUrls.length}
+            </div>
+        )}
         
         {isJobRunning && (
           <div className="absolute inset-0 bg-black/70 flex items-center justify-center backdrop-blur-[1px]">
               {job.progress !== undefined ? (
                   <div className="relative w-8 h-8">
                       <svg className="w-full h-full transform -rotate-90">
-                          <circle className="text-slate-700" strokeWidth="3" stroke="currentColor" fill="transparent" r={radius} cx="16" cy="16" />
+                          <circle className="text-zinc-700" strokeWidth="3" stroke="currentColor" fill="transparent" r={radius} cx="16" cy="16" />
                           <circle 
                               className="text-blue-500"
                               strokeWidth="3"
@@ -113,7 +129,7 @@ const BatchJobItem: React.FC<BatchJobItemProps> = ({ job, activeJobId, setActive
       
       <div className="flex-1 min-w-0">
         <div className="flex justify-between items-start">
-            <p className={`text-[11px] font-bold truncate pr-6 ${activeJobId === job.id ? 'text-white' : 'text-slate-400 group-hover:text-slate-200'}`}>
+            <p className={`text-[11px] font-bold truncate pr-6 ${activeJobId === job.id ? 'text-white' : 'text-zinc-400 group-hover:text-zinc-200'}`}>
                 {job.file.name}
             </p>
         </div>
@@ -125,16 +141,17 @@ const BatchJobItem: React.FC<BatchJobItemProps> = ({ job, activeJobId, setActive
                 {status.text}
              </span>
           </div>
-          <span className="text-[9px] text-slate-600 font-mono">{Math.round(job.file.size / 1024)}KB</span>
+          <span className="text-[9px] text-zinc-600 font-mono">{Math.round(job.file.size / 1024)}KB</span>
         </div>
       </div>
 
-      <button 
+      <Button 
+        variant="ghost"
         onClick={handleDeleteClick}
-        className={`absolute top-2 right-2 p-1.5 rounded-lg transition-all ${
+        className={`absolute top-2 right-2 p-1.5 h-auto rounded-lg transition-all ${
             isConfirmingDelete 
-            ? 'bg-red-600 text-white opacity-100 scale-110 shadow-lg' 
-            : 'text-slate-600 hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100'
+            ? 'bg-red-600 text-white opacity-100 scale-110 shadow-lg hover:bg-red-700' 
+            : 'text-zinc-600 hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100'
         }`}
         title={isConfirmingDelete ? "Confirm Delete" : "Remove Job"}
       >
@@ -143,7 +160,7 @@ const BatchJobItem: React.FC<BatchJobItemProps> = ({ job, activeJobId, setActive
         ) : (
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
         )}
-      </button>
+      </Button>
     </div>
   );
 };

@@ -1,10 +1,11 @@
 
-import { GenerateContentResponse, Type } from "@google/genai";
-import { MemoryInsight, GroundingSource } from "../../types";
+import { GenerateContentResponse, ThinkingLevel } from "@google/genai";
+import { GroundingSource } from "../../types";
 import { getAI, callWithRetry } from "../../lib/gemini";
 import { executeManagedTask } from "../../lib/tieredExecutor";
 import { cleanJson } from "./utils";
 import { optimizeImagePayload } from "../../lib/utils";
+import { MODELS } from "../../config/models";
 
 /**
  * Packaging Strategy Planning
@@ -20,8 +21,8 @@ export const planPackagingProject = async (
 }> => {
   return executeManagedTask('STRATEGY_PLANNING', async () => {
     const ai = getAI();
-    const model = "gemini-3.1-pro-preview";
-    const backupModel = "gemini-3-flash-preview";
+    const model = MODELS.TEXT_PRIMARY;
+    const backupModel = MODELS.TEXT_FAST;
 
     const prompt = `
       VAI TRÒ: KỸ SƯ GIẢI PHÁP ĐÓNG GÓI (PACKAGING ENGINEER).
@@ -41,18 +42,9 @@ export const planPackagingProject = async (
     `;
 
     const config = {
-        thinkingConfig: { thinkingBudget: 32768 }, // UPGRADE: Deep Engineering
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            visualPrompt: { type: Type.STRING },
-            structuredBrief: { type: Type.STRING },
-            trendsSummary: { type: Type.STRING }
-          },
-          required: ["visualPrompt", "structuredBrief"]
-        }
-    } as any;
+        thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH }, // UPGRADE: Deep Engineering
+        responseMimeType: "application/json"
+    };
 
     const response = await callWithRetry<GenerateContentResponse>(
       () => ai.models.generateContent({
@@ -60,14 +52,14 @@ export const planPackagingProject = async (
         contents: { parts: [{ text: prompt }] },
         config
       }),
-      3,
-      2000,
+      2,
+      1000,
       model,
-      () => ai.models.generateContent({
+      [() => ai.models.generateContent({
         model: backupModel,
         contents: { parts: [{ text: prompt }] },
         config
-      })
+      })]
     );
 
     const data = JSON.parse(cleanJson(response.text || "{}"));
@@ -89,8 +81,8 @@ export const generatePackagingSpecs = async (
 ): Promise<string> => {
   return executeManagedTask('REPORTING', async () => {
     const ai = getAI();
-    const model = "gemini-3.1-pro-preview";
-    const backupModel = "gemini-3-flash-preview";
+    const model = MODELS.TEXT_PRIMARY;
+    const backupModel = MODELS.TEXT_FAST;
 
     const prompt = `
       VAI TRÒ: KỸ SƯ SẢN XUẤT BAO BÌ (PACKAGING ENGINEER).
@@ -108,13 +100,13 @@ export const generatePackagingSpecs = async (
         model,
         contents: { parts: [{ text: prompt }] }
       }),
-      3,
-      2000,
+      2,
+      1000,
       model,
-      () => ai.models.generateContent({
+      [() => ai.models.generateContent({
         model: backupModel,
         contents: { parts: [{ text: prompt }] }
-      })
+      })]
     );
 
     return response.text || "Đã lập hồ sơ kỹ thuật bao bì.";
@@ -138,8 +130,8 @@ export const generateVectorBlueprint = async (
 }> => {
   return executeManagedTask('BLUEPRINT_DECOMPOSITION', async () => {
     const ai = getAI();
-    const model = "gemini-3.1-pro-preview";
-    const backupModel = "gemini-3-flash-preview";
+    const model = MODELS.TEXT_PRIMARY;
+    const backupModel = MODELS.TEXT_FAST;
 
     // Optimization
     const optImage = await optimizeImagePayload(packagingImage, 'vision');
@@ -168,25 +160,9 @@ export const generateVectorBlueprint = async (
     `;
 
     const config = {
-        thinkingConfig: { thinkingBudget: 32768 }, // UPGRADE: Deep Deconstruction
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            analysisSummary: { type: Type.STRING },
-            layerPrompts: {
-              type: Type.OBJECT,
-              properties: {
-                background: { type: Type.STRING },
-                typography: { type: Type.STRING },
-                graphics: { type: Type.STRING }
-              },
-              required: ["background", "typography", "graphics"]
-            }
-          },
-          required: ["analysisSummary", "layerPrompts"]
-        }
-    } as any;
+        thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH }, // UPGRADE: Deep Deconstruction
+        responseMimeType: "application/json"
+    };
 
     const response = await callWithRetry<GenerateContentResponse>(
       () => ai.models.generateContent({
@@ -194,14 +170,14 @@ export const generateVectorBlueprint = async (
         contents: { parts: [{ text: prompt }, { inlineData: { mimeType: "image/png", data: optImage.split(',')[1] } }] },
         config
       }),
-      3,
-      2000,
+      2,
+      1000,
       model,
-      () => ai.models.generateContent({
+      [() => ai.models.generateContent({
         model: backupModel,
         contents: { parts: [{ text: prompt }, { inlineData: { mimeType: "image/png", data: optImage.split(',')[1] } }] },
         config
-      })
+      })]
     );
 
     return JSON.parse(cleanJson(response.text || "{}"));

@@ -1,9 +1,10 @@
 
-import { Type, GenerateContentResponse } from "@google/genai";
+import { GenerateContentResponse } from "@google/genai";
 import { getAI, callWithRetry } from "../../../lib/gemini";
 import { optimizeImagePayload } from "../../../lib/utils";
 import { cleanJson } from "../../../services/orchestrator/utils";
 import { executeManagedTask } from "../../../lib/tieredExecutor";
+import { MODELS } from "../../../config/models";
 
 export interface FontStrategy {
   classification: string;
@@ -17,8 +18,8 @@ export interface FontStrategy {
 export const runFontStrategist = async (imageContent: string): Promise<FontStrategy> => {
   return executeManagedTask('ANALYSIS_FAST', async () => {
     const ai = getAI();
-    const model = "gemini-3-flash-preview";
-    const backupModel = "gemini-3-flash-preview";
+    const model = MODELS.TEXT_FAST;
+    const backupModel = MODELS.TEXT_FAST;
     
     const optImage = await optimizeImagePayload(imageContent, 'vision');
 
@@ -42,19 +43,8 @@ export const runFontStrategist = async (imageContent: string): Promise<FontStrat
     `;
 
     const config = {
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          classification: { type: Type.STRING },
-          strokeStyle: { type: Type.STRING },
-          usageScope: { type: Type.STRING },
-          gridConfig: { type: Type.STRING },
-          emotionalVibe: { type: Type.STRING },
-          visualDescription: { type: Type.STRING }
-        },
-        required: ["classification", "strokeStyle", "visualDescription"]
-      }
+      
+      
     };
 
     const response = await callWithRetry<GenerateContentResponse>(
@@ -63,12 +53,12 @@ export const runFontStrategist = async (imageContent: string): Promise<FontStrat
         contents: { parts: [{ text: prompt }, { inlineData: { mimeType: "image/png", data: optImage.split(',')[1] } }] },
         config
       }),
-      3, 1000, model,
-      () => ai.models.generateContent({
+      2, 1000, model,
+      [() => ai.models.generateContent({
         model: backupModel,
         contents: { parts: [{ text: prompt }, { inlineData: { mimeType: "image/png", data: optImage.split(',')[1] } }] },
         config
-      })
+      })]
     );
 
     return JSON.parse(cleanJson(response.text || "{}"));

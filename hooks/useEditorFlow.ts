@@ -4,7 +4,8 @@ import { EditorState, Pin, MessageRole, MemoryInsight, ChatMessage, ScenarioCate
 import * as editorOrchestrator from '../services/flows/editorOrchestrator';
 import * as pixelService from '../services/pixelService';
 import * as agentService from '../services/agentService'; // For removeBg direct call
-import { getClosestAspectRatio } from '../lib/utils';
+import { getClosestAspectRatio, base64ToBlobUrl } from '../lib/utils';
+import { useToast } from '../components/Toast';
 
 interface UseEditorFlowProps {
   addMessage: (msg: Partial<ChatMessage>) => string;
@@ -34,6 +35,7 @@ export const useEditorFlow = ({
     pins: [],
     currentStroke: null
   });
+  const { addToast } = useToast();
 
   const handleEditImage = (img: string, label: string) => {
     setEditorState({
@@ -136,7 +138,10 @@ export const useEditorFlow = ({
              });
         }
 
-        if (result.image) setCurrentImage(result.image);
+        if (result.image) {
+            result.image = await base64ToBlobUrl(result.image);
+            setCurrentImage(result.image);
+        }
 
         setMessages(prev => prev.map(m => m.id === procId ? {
            ...m,
@@ -145,9 +150,11 @@ export const useEditorFlow = ({
            imageLabel: getNextLabel(),
            isProcessing: false
         } : m));
+        addToast("Chỉnh sửa hoàn tất", "success");
 
      } catch (e: any) {
         setMessages(prev => prev.map(m => m.id === procId ? { ...m, text: `Failed: ${e.message}`, isProcessing: false } : m));
+        addToast(`Lỗi chỉnh sửa: ${e.message}`, "error");
      } finally {
         setIsProcessing(false);
         onEngineChange(undefined);
@@ -160,22 +167,29 @@ export const useEditorFlow = ({
     
     try {
       const ratio = await getClosestAspectRatio(img);
-      const res = await pixelService.upscaleTo4K(img, label, ratio);
+      let { image, model } = await pixelService.upscaleTo4K(img, label, ratio);
+      
+      if (image) {
+          image = await base64ToBlobUrl(image);
+      }
       
       setMessages(prev => prev.map(m => m.image === img ? { 
           ...m, 
-          image: res, 
+          image: image, 
           isUpscaled: true, 
           isUpscaling: false,
+          modelUsed: model,
           text: m.text + "\n\n[✓] Hình ảnh đã được nâng cấp lên độ phân giải 4K ULTRA HD với tỷ lệ gốc."
       } : m));
       
-      if (res) setCurrentImage(res);
+      if (image) setCurrentImage(image);
+      addToast("Nâng cấp 4K hoàn tất", "success");
 
-    } catch (e) {
+    } catch (e: any) {
       console.error("4K Upscale failed", e);
       setMessages(prev => prev.map(m => m.image === img ? { ...m, isUpscaling: false } : m));
-      alert("Nâng cấp 4K thất bại. Vui lòng thử lại.");
+      const errorMsg = e.message || "Vui lòng thử lại.";
+      addToast(`Nâng cấp 4K thất bại: ${errorMsg}`, "error");
     } finally {
       onEngineChange(undefined);
     }
@@ -184,13 +198,22 @@ export const useEditorFlow = ({
   const handleRemoveBg = async (img: string, label: string) => {
     onEngineChange("Gemini 3 Pro Image");
     try {
+      addToast("Đang tách nền...", "info");
       const res = await agentService.executeBackgroundRemoval(img, label, memory);
       if(res.image) {
+         // Convert to blob URL for download
+         const blobUrl = await base64ToBlobUrl(res.image);
          const link = document.createElement('a');
-         link.href = res.image;
+         link.href = blobUrl;
          link.download = `${label}-nobg.png`;
          link.click();
+         // Revoke the blob URL after a short delay to allow download to start
+         setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+         addToast("Tách nền hoàn tất", "success");
       }
+    } catch (e: any) {
+      console.error("Remove BG failed", e);
+      addToast(`Tách nền thất bại: ${e.message || 'Lỗi không xác định'}`, "error");
     } finally {
       onEngineChange(undefined);
     }

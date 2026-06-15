@@ -1,10 +1,11 @@
 
-import { GenerateContentResponse, Type } from "@google/genai";
+import { GenerateContentResponse, ThinkingLevel } from "@google/genai";
 import { MemoryInsight, GroundingSource } from "../../types";
 import { getAI, callWithRetry } from "../../lib/gemini";
 import { executeManagedTask } from "../../lib/tieredExecutor";
 import { cleanJson } from "./utils";
 import { optimizeImagePayload } from "../../lib/utils";
+import { MODELS } from "../../config/models";
 
 /**
  * Giai đoạn 1: Phân tích & Chiến lược (Intake -> Measure -> Copy -> Visual System)
@@ -25,8 +26,8 @@ export const planSignageProject = async (
 }> => {
   return executeManagedTask('STRATEGY_PLANNING', async () => {
     const ai = getAI();
-    const model = "gemini-3.1-pro-preview";
-    const backupModel = "gemini-3-flash-preview";
+    const model = MODELS.TEXT_PRIMARY;
+    const backupModel = MODELS.TEXT_FAST;
 
     // SMART PRE-OPTIMIZATION: Vision Profile (1024px is enough for layout analysis)
     const optFacade = facadeImage ? await optimizeImagePayload(facadeImage, 'vision') : null;
@@ -57,11 +58,12 @@ export const planSignageProject = async (
       4. VISUAL PROMPT (Để sinh ảnh Mockup):
          - Viết prompt tiếng Anh chi tiết để AI vẽ đè bảng hiệu lên ảnh gốc.
          - Mô tả rõ: "Superimpose a [Material] signboard on the building facade...".
+         - CHÚ Ý: Đảm bảo prompt tiếng Anh tuân thủ các nguyên tắc thiết kế bảng hiệu (độ tương phản, kích thước chữ, vật liệu).
       
       OUTPUT FORMAT (JSON):
       {
         "structuredBrief": "Markdown string chi tiết về phương án thi công (Design Brief)",
-        "visualPrompt": "Prompt tiếng Anh để render mockup",
+        "visualPrompt": "Prompt tiếng Anh để render mockup (phải cực kỳ chi tiết về ánh sáng, vật liệu, và vị trí)",
         "placementAnalysis": "Phân tích vị trí đặt bảng"
       }
     `;
@@ -72,18 +74,9 @@ export const planSignageProject = async (
     }
 
     const config = {
-        thinkingConfig: { thinkingBudget: 32768 }, // UPGRADE: Deep Structural Analysis
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            structuredBrief: { type: Type.STRING },
-            visualPrompt: { type: Type.STRING },
-            placementAnalysis: { type: Type.STRING }
-          },
-          required: ["structuredBrief", "visualPrompt"]
-        }
-    } as any;
+        thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH }, // UPGRADE: Deep Structural Analysis
+        responseMimeType: "application/json"
+    };
 
     const response = await callWithRetry<GenerateContentResponse>(
       () => ai.models.generateContent({
@@ -91,14 +84,14 @@ export const planSignageProject = async (
         contents: { parts },
         config
       }), 
-      3, 
-      2000, 
+      2, 
+      1000, 
       model, 
-      () => ai.models.generateContent({
+      [() => ai.models.generateContent({
         model: backupModel,
         contents: { parts },
         config
-      })
+      })]
     );
 
     const data = JSON.parse(cleanJson(response.text || "{}"));
@@ -124,8 +117,8 @@ export const generateSignageSpecs = async (
 ): Promise<string> => {
   return executeManagedTask('REPORTING', async () => {
     const ai = getAI();
-    const model = "gemini-3.1-pro-preview";
-    const backupModel = "gemini-3-flash-preview";
+    const model = MODELS.TEXT_PRIMARY;
+    const backupModel = MODELS.TEXT_FAST;
 
     const prompt = `
       VAI TRÒ: KỸ SƯ SẢN XUẤT QUẢNG CÁO (PRODUCTION ENGINEER).
@@ -158,7 +151,7 @@ export const generateSignageSpecs = async (
       3,
       2000,
       model,
-      () => ai.models.generateContent({ model: backupModel, contents: { parts: [{ text: prompt }] } })
+      [() => ai.models.generateContent({ model: backupModel, contents: { parts: [{ text: prompt }] } })]
     );
 
     return response.text || "Đã lập hồ sơ kỹ thuật.";

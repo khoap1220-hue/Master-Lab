@@ -3,6 +3,7 @@ import { GenerateContentResponse, Part } from "@google/genai";
 import { getAI, callWithRetry } from "../../lib/gemini";
 import { executeManagedTask } from "../../lib/tieredExecutor";
 import { optimizeImagePayload } from "../../lib/utils";
+import { MODELS } from "../../config/models";
 
 /**
  * Execute Auto-Rebrand for a specific extracted asset.
@@ -14,13 +15,14 @@ export const executeAutoRebrand = async (
   newLogoUrl: string,
   brandColor: string,
   styleNotes: string
-): Promise<string> => {
+): Promise<{ image: string; model: string }> => {
   // Use 'IMAGE_GEN_BATCH' to route to the BATCH tier (5000ms delay, 30m Timeout)
   return executeManagedTask('IMAGE_GEN_BATCH', async () => {
     const ai = getAI();
-    // Using gemini-2.5-flash-image for reliable image output
-    const model = "gemini-2.5-flash-image"; 
-    const backupModel = "gemini-3-pro-image-preview";
+    // Using MODELS.IMAGE_PRIMARY for reliable image output
+    const model = MODELS.IMAGE_PRIMARY; 
+    const proModel = MODELS.IMAGE_PRO;
+    const flashModel = MODELS.IMAGE_FAST;
     
     // SMART PRE-OPTIMIZATION: Editing Profile (Preserve Transparency for both items)
     const [optAsset, optLogo] = await Promise.all([
@@ -55,25 +57,38 @@ export const executeAutoRebrand = async (
       { inlineData: { mimeType: "image/png", data: optLogo.split(',')[1] } }
     ];
 
-    // Primary: Flash Image (Fast), Fallback: Pro Image (High Quality)
+    let usedModel: string = model;
+    // Primary: 3.1 Flash, Backup: 3 Pro, Final: 2.5 Flash
     const response = await callWithRetry<GenerateContentResponse>(
       () => ai.models.generateContent({
         model,
         contents: { parts },
         config: { imageConfig: { aspectRatio: "1:1" } }
       }), 
-      3, 1000, model, 
-      () => ai.models.generateContent({
-        model: backupModel,
-        contents: { parts },
-        config: { imageConfig: { aspectRatio: "1:1", imageSize: "1K" } }
-      }),
-      600000 // Extended: 10 minute timeout for individual rebrand
+      2, 1000, model, 
+      [
+        () => ai.models.generateContent({
+          model: proModel,
+          contents: { parts },
+          config: { imageConfig: { aspectRatio: "1:1" } }
+        }),
+        () => ai.models.generateContent({
+          model: flashModel,
+          contents: { parts },
+          config: { imageConfig: { aspectRatio: "1:1" } }
+        })
+      ],
+      1200000, // Extended: 20 minute timeout for individual rebrand
+      true,
+      (m) => usedModel = m
     );
 
     const part = response.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
     if (!part || !part.inlineData) throw new Error(`Failed to rebrand ${assetName}`);
     
-    return `data:image/png;base64,${part.inlineData.data}`;
+    return {
+      image: `data:image/png;base64,${part.inlineData.data}`,
+      model: usedModel
+    };
   });
 };

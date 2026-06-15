@@ -1,9 +1,10 @@
 
-import { GenerateContentResponse, Type } from "@google/genai";
-import { MemoryInsight, GroundingSource } from "../../types";
+import { GenerateContentResponse } from "@google/genai";
+import { GroundingSource } from "../../types";
 import { getAI, callWithRetry } from "../../lib/gemini";
 import { executeManagedTask } from "../../lib/tieredExecutor";
 import { cleanJson } from "./utils";
+import { MODELS } from "../../config/models";
 
 const SPELLING_ENFORCER = `
   *** QUY TẮC CHÍNH TẢ & NGÔN NGỮ (BẮT BUỘC) ***
@@ -11,6 +12,8 @@ const SPELLING_ENFORCER = `
   - Kiểm tra kỹ các từ dễ sai (VD: "xử lý", "trình bày", "chuyên nghiệp").
   - Văn phong Marketing: Cuốn hút nhưng phải giữ đúng quy chuẩn ngữ pháp.
 `;
+
+import { ThinkingLevel } from '@google/genai';
 
 /**
  * Marketing Campaign Strategy (Deep Thinking)
@@ -25,8 +28,8 @@ export const planMarketingCampaign = async (
 }> => {
   return executeManagedTask('STRATEGY_PLANNING', async () => {
     const ai = getAI();
-    const model = "gemini-3.1-pro-preview";
-    const backupModel = "gemini-3-flash-preview";
+    const model = MODELS.TEXT_PRIMARY;
+    const backupModel = MODELS.TEXT_FAST;
 
     const prompt = `
       VAI TRÒ: GIÁM ĐỐC MARKETING (CMO).
@@ -45,17 +48,9 @@ export const planMarketingCampaign = async (
     `;
 
     const config = {
-        thinkingConfig: { thinkingBudget: 32768 }, // UPGRADE: Deep Strategy
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            visualPrompt: { type: Type.STRING },
-            structuredBrief: { type: Type.STRING }
-          },
-          required: ["visualPrompt", "structuredBrief"]
-        }
-    } as any;
+        thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH }, // UPGRADE: Deep Strategy
+        responseMimeType: "application/json"
+    };
 
     const response = await callWithRetry<GenerateContentResponse>(
       () => ai.models.generateContent({
@@ -63,14 +58,14 @@ export const planMarketingCampaign = async (
         contents: { parts: [{ text: prompt }] },
         config
       }),
-      3,
-      2000,
+      2,
+      1000,
       model,
-      () => ai.models.generateContent({
+      [() => ai.models.generateContent({
         model: backupModel,
         contents: { parts: [{ text: prompt }] },
         config
-      })
+      })]
     );
 
     const data = JSON.parse(cleanJson(response.text || "{}"));
@@ -91,8 +86,8 @@ export const generateMarketingSpecs = async (
 ): Promise<string> => {
   return executeManagedTask('REPORTING', async () => {
     const ai = getAI();
-    const model = "gemini-3-flash-preview"; 
-    const backupModel = "gemini-3-flash-preview";
+    const model = MODELS.TEXT_FAST; 
+    const backupModel = MODELS.TEXT_FAST;
 
     const prompt = `
       VAI TRÒ: DIGITAL MARKETER & COPYWRITER.
@@ -116,10 +111,10 @@ export const generateMarketingSpecs = async (
 
     const response = await callWithRetry<GenerateContentResponse>(
       () => ai.models.generateContent({ model, contents: { parts: [{ text: prompt }] } }),
-      3,
-      2000,
+      2,
+      1000,
       model,
-      () => ai.models.generateContent({ model: backupModel, contents: { parts: [{ text: prompt }] } })
+      [() => ai.models.generateContent({ model: backupModel, contents: { parts: [{ text: prompt }] } })]
     );
 
     return response.text || "Đã lập kế hoạch content.";

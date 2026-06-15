@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { Pin } from '../../../types';
+import { Button } from '../../../components/ui/Button';
 
 interface PinLayerProps {
   pins: Pin[];
@@ -208,7 +209,7 @@ const PinLayer: React.FC<PinLayerProps> = ({
             {/* Popup Editor */}
             {(activePin === pin.id && !isDragging && !isHolding) && (
                 <div 
-                  className="absolute top-6 left-1/2 -translate-x-1/2 bg-slate-900 border border-slate-700 p-4 rounded-2xl shadow-3xl min-w-[200px] z-50 animate-in fade-in zoom-in duration-200 cursor-auto mt-4"
+                  className="absolute top-6 left-1/2 -translate-x-1/2 bg-zinc-900 border border-zinc-700 p-4 rounded-2xl shadow-3xl min-w-[200px] z-50 animate-in fade-in zoom-in duration-200 cursor-auto mt-4"
                   onMouseDown={(e) => e.stopPropagation()} 
                   onTouchStart={(e) => e.stopPropagation()}
                   onClick={(e) => e.stopPropagation()}
@@ -216,12 +217,12 @@ const PinLayer: React.FC<PinLayerProps> = ({
                   <textarea 
                     autoFocus value={pin.note}
                     onChange={(e) => onPinUpdate(pin.id, e.target.value)}
-                    className="w-full bg-slate-800 border-none text-white text-xs p-3 rounded-xl focus:ring-1 focus:ring-blue-500 h-20 resize-none mb-2"
+                    className="w-full bg-zinc-800 border-none text-white text-xs p-3 rounded-xl focus:ring-1 focus:ring-blue-500 h-20 resize-none mb-2"
                     placeholder="Ghi chú tại điểm này..."
                   />
                   <div className="flex gap-2">
-                    <button onClick={onClosePopup} className="flex-1 py-2 text-[10px] font-bold text-slate-400 bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors">Done</button>
-                    <button onClick={() => onPinDelete(pin.id)} className="px-3 py-2 text-[10px] font-bold text-red-400 bg-red-500/10 hover:bg-red-500/20 rounded-lg transition-colors">Delete</button>
+                    <Button variant="secondary" onClick={onClosePopup} className="flex-1 py-2 text-[10px] font-bold text-zinc-400 bg-zinc-800 hover:bg-zinc-700 rounded-lg transition-colors h-auto">Done</Button>
+                    <Button variant="ghost" onClick={() => onPinDelete(pin.id)} className="px-3 py-2 text-[10px] font-bold text-red-400 bg-red-500/10 hover:bg-red-500/20 rounded-lg transition-colors h-auto">Delete</Button>
                   </div>
                 </div>
             )}

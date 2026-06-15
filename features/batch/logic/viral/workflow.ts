@@ -1,10 +1,12 @@
 
 import { BatchJob, ProcessStatus, ViralStoryPlan } from "../../../../types";
 import { getAI, callWithRetry } from "../../../../lib/gemini";
+import { executeManagedTask } from "../../../../lib/tieredExecutor";
 import { INITIAL_MEMORY } from "../../../../data/constants";
 import { runViralEngine } from "./engine";
 import { optimizeImagePayload } from "../../../../lib/utils";
 import { generateDesignVariation } from "../../../../services/pixelService";
+import { MODELS } from "../../../../config/models";
 
 interface BatchConfig {
     brandVibe: string;
@@ -17,29 +19,40 @@ interface BatchConfig {
  * HELPER: DRAFT VISUAL GENERATOR (Using Flash Image)
  */
 const generateDraftVisual = async (prompt: string, refImage?: string, ratio: string = "9:16") => {
-    const ai = getAI();
-    const model = "gemini-2.5-flash-image"; // FLASH FOR KEYFRAMES
-    
-    const parts: any[] = [{ text: prompt }];
-    if (refImage) {
-        const optRef = await optimizeImagePayload(refImage, 'generation');
-        parts.push({ inlineData: { mimeType: "image/png", data: optRef.split(',')[1] } });
-    }
+    return await executeManagedTask('IMAGE_GEN_FAST', async () => {
+        const ai = getAI();
+        const model = MODELS.IMAGE_PRIMARY; // PRIMARY FOR KEYFRAMES
+        
+        const parts: any[] = [{ text: prompt }];
+        if (refImage) {
+            const optRef = await optimizeImagePayload(refImage, 'generation');
+            parts.push({ inlineData: { mimeType: "image/png", data: optRef.split(',')[1] } });
+        }
 
-    const response = await callWithRetry<any>(
-        () => ai.models.generateContent({
-            model,
-            contents: { parts },
-            config: { imageConfig: { aspectRatio: ratio as any } }
-        }),
-        3, 1000, model
-    );
+        const response = await callWithRetry<any>(
+            () => ai.models.generateContent({
+                model,
+                contents: { parts },
+                config: { imageConfig: { aspectRatio: ratio } }
+            }),
+            2, 1000, model,
+            [
+                () => ai.models.generateContent({
+                    model: MODELS.IMAGE_PRO,
+                    contents: { parts },
+                    config: { imageConfig: { aspectRatio: ratio } }
+                })
+            ],
+            60000,
+            true
+        );
 
-    let image = undefined;
-    response.candidates?.[0]?.content?.parts?.forEach((part: any) => {
-        if (part.inlineData) image = `data:image/png;base64,${part.inlineData.data}`;
+        let image = undefined;
+        response.candidates?.[0]?.content?.parts?.forEach((part: any) => {
+            if (part.inlineData) image = `data:image/png;base64,${part.inlineData.data}`;
+        });
+        return image;
     });
-    return image;
 };
 
 /**
@@ -50,28 +63,37 @@ export const processViralStory = async (
     config: BatchConfig, 
     updateJobStatus: (id: string, status: ProcessStatus, updates?: Partial<BatchJob>) => void
 ) => {
+    const state = job.state || {};
+    let result = state.result;
+    let hooksWithImages = state.hooksWithImages || [];
+
     try {
         const isSynthetic = job.originalUrl.includes("Viral Story Plan") || job.originalUrl.includes("<svg");
         const hasImage = !isSynthetic;
 
-        updateJobStatus(job.id, 'scripting', { progressMessage: "V1 Agent: Brainstorming Strategy (Flash 3)..." });
+        if (!result) {
+            updateJobStatus(job.id, 'scripting', { progressMessage: "V1 Agent: Brainstorming Strategy (Flash 3)..." });
 
-        // 1. Plan Generation (Now using Flash 3)
-        const result = await runViralEngine(
-            config.targetText || (hasImage ? "This Product" : "Product Concept"),
-            config.brandVibe,
-            config.platform || "TikTok",
-            config.duration || "15s",
-            hasImage ? job.originalUrl : undefined
-        );
+            // 1. Plan Generation (Now using Flash 3)
+            result = await runViralEngine(
+                config.targetText || (hasImage ? "This Product" : "Product Concept"),
+                config.brandVibe,
+                config.platform || "TikTok",
+                config.duration || "15s",
+                hasImage ? job.originalUrl : undefined
+            );
+            
+            state.result = result;
+            updateJobStatus(job.id, 'scripting', { state });
+        }
 
         updateJobStatus(job.id, 'visualizing_hooks', { progressMessage: "V2 Agent: Rendering Keyframes (Flash 2.5)..." });
         
-        const hooksWithImages = [];
         const hooks = result?.plan?.hookVariants || [];
 
         // 2. Sequential Flash Image Gen
-        for (let i = 0; i < hooks.length; i++) {
+        const startIndex = hooksWithImages.length;
+        for (let i = startIndex; i < hooks.length; i++) {
             const hook = hooks[i];
             updateJobStatus(job.id, 'visualizing_hooks', { progressMessage: `Visualizing Hook (${i + 1}/${hooks.length})...` });
 
@@ -85,16 +107,26 @@ export const processViralStory = async (
                 console.warn(`Keyframe failed for ${hook.id}`, e);
                 // Fail-fast on 403 Permission
                 if (e.message?.includes("403") || e.message?.includes("permission")) {
-                    updateJobStatus(job.id, 'failed', { error: "Lỗi phân quyền (403). Vui lòng cấu hình API Key từ Project đã bật Billing." });
+                    updateJobStatus(job.id, 'failed', { 
+                        error: "Lỗi phân quyền (403). Vui lòng cấu hình API Key từ Project đã bật Billing.",
+                        state: { ...state, result, hooksWithImages },
+                        viralPlan: { ...result.plan, hookVariants: hooksWithImages }
+                    });
                     return;
                 }
                 hooksWithImages.push({ ...hook, keyframeImage: hasImage ? job.originalUrl : undefined });
             }
-            await new Promise(r => setTimeout(r, 1200));
+            
+            state.hooksWithImages = hooksWithImages;
+            updateJobStatus(job.id, 'visualizing_hooks', { state });
+            
+            // Delay to respect rate limits
+            await new Promise(r => setTimeout(r, 1000));
         }
 
         const finalPlan: ViralStoryPlan = {
             ...(result.plan || {}),
+            duration: config.duration || "15s",
             hookVariants: hooksWithImages,
             socialPosts: result.plan?.socialPosts || [],
             instagramQuotes: result.plan?.instagramQuotes || [],
@@ -104,12 +136,17 @@ export const processViralStory = async (
         updateJobStatus(job.id, 'completed', { 
             progressMessage: "Ready for channel distribution.",
             viralPlan: finalPlan,
-            viralScore: result.score
+            viralScore: result.score,
+            state: {} // Clear state on success
         });
 
     } catch (error: any) {
         console.error("Viral Process Error:", error);
-        updateJobStatus(job.id, 'failed', { error: error.message || "Engine busy. Please retry." });
+        updateJobStatus(job.id, 'failed', { 
+            error: error.message || "Engine busy. Please retry.",
+            state: { ...state, result, hooksWithImages },
+            viralPlan: result?.plan ? { ...result.plan, hookVariants: hooksWithImages } : undefined
+        });
     }
 };
 
@@ -123,6 +160,9 @@ export const confirmViralHook = async (
 ) => {
     if (!job.viralPlan || !job.viralPlan.hookVariants) return;
 
+    const state = job.state || {};
+    let renderedShots: any[] = state.renderedShots || [];
+
     const selected = job.viralPlan.hookVariants.find(h => h.id === hookId);
     if (!selected) return;
 
@@ -132,7 +172,7 @@ export const confirmViralHook = async (
         { 
             shot_id: "S1", 
             role: "Hook" as const, 
-            duration: 3, 
+            duration: 5, 
             visual_prompt: selected.visual_prompt, 
             audio_script: selected.script, 
             viral_tech: selected.pattern, 
@@ -148,9 +188,10 @@ export const confirmViralHook = async (
 
     try {
         const isSynthetic = job.originalUrl.includes("Viral Story Plan") || job.originalUrl.includes("<svg");
-        const renderedShots = [];
 
-        for (const shot of initialShots) {
+        const startIndex = renderedShots.length;
+        for (let i = startIndex; i < initialShots.length; i++) {
+            const shot = initialShots[i];
             if (shot.keyframeImage) {
                 renderedShots.push(shot);
                 continue;
@@ -166,11 +207,19 @@ export const confirmViralHook = async (
             } catch (e: any) {
                 console.warn(`Shot failed: ${shot.shot_id}`, e);
                 if (e.message?.includes("403")) {
-                    updateJobStatus(job.id, 'failed', { error: "Lỗi phân quyền. Kiểm tra Billing." });
+                    updateJobStatus(job.id, 'failed', { 
+                        error: "Lỗi phân quyền. Kiểm tra Billing.",
+                        state: { ...state, renderedShots },
+                        viralPlan: { ...job.viralPlan, selectedHookId: hookId, shots: renderedShots }
+                    });
                     return;
                 }
                 renderedShots.push(shot); 
             }
+            
+            state.renderedShots = renderedShots;
+            updateJobStatus(job.id, 'completed', { state });
+            
             await new Promise(r => setTimeout(r, 1000));
         }
 
@@ -179,10 +228,16 @@ export const confirmViralHook = async (
                 ...job.viralPlan,
                 selectedHookId: hookId,
                 shots: renderedShots
-            }
+            },
+            state: {} // Clear state on success
         });
-    } catch (e) {
+    } catch (e: any) {
         console.warn("Timeline visualization failed", e);
+        updateJobStatus(job.id, 'failed', { 
+            error: e.message || "Timeline visualization failed",
+            state: { ...state, renderedShots },
+            viralPlan: { ...job.viralPlan, selectedHookId: hookId, shots: renderedShots }
+        });
     }
 };
 
@@ -240,3 +295,15 @@ export const generateQuoteVisual = async (
         updateJobStatus(job.id, 'failed', { error: `Quote Gen Failed: ${e.message}` });
     }
 };
+
+import { globalAgentRegistry } from '../registry';
+
+globalAgentRegistry.register({
+    id: 'viral-story',
+    name: 'Viral Story Engine',
+    description: 'Tạo kịch bản và nội dung viral cho mạng xã hội.',
+    icon: 'TrendingUp',
+    category: 'Marketing',
+    priority: 5,
+    processFn: processViralStory
+});

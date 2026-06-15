@@ -1,9 +1,11 @@
 
-import { GenerateContentResponse, Type } from "@google/genai";
-import { MemoryInsight, GroundingSource } from "../../types";
+import { GenerateContentResponse } from "@google/genai";
+import { GroundingSource } from "../../types";
 import { getAI, callWithRetry } from "../../lib/gemini";
 import { executeManagedTask } from "../../lib/tieredExecutor";
 import { cleanJson } from "./utils";
+import { ARCHITECTURAL_PROTOCOL } from "../prompts";
+import { MODELS } from "../../config/models";
 
 /**
  * Real Estate Staging Strategy
@@ -19,8 +21,8 @@ export const planRealEstateRenovation = async (
 }> => {
   return executeManagedTask('STRATEGY_PLANNING', async () => {
     const ai = getAI();
-    const model = "gemini-3.1-pro-preview";
-    const backupModel = "gemini-3-flash-preview";
+    const model = MODELS.TEXT_PRIMARY;
+    const backupModel = MODELS.TEXT_FAST;
 
     const prompt = `
       VAI TRÒ: KIẾN TRÚC SƯ NỘI THẤT CHỦ TRÌ (SENIOR INTERIOR ARCHITECT).
@@ -37,6 +39,8 @@ export const planRealEstateRenovation = async (
       2. Phân tích Vật liệu (Materials): Đề xuất vật liệu cụ thể (Gỗ sồi, Đá Marble, Vải nhung) để tăng tính hiện thực.
       3. Bố cục (Layout): Đảm bảo luồng giao thông hợp lý.
       
+      ${ARCHITECTURAL_PROTOCOL}
+
       OUTPUT FORMAT (JSON):
       {
         "visualPrompt": "Photorealistic ArchViz Prompt. Must specify: Camera Angle (Straight on/45 deg), Lighting (e.g. Golden Hour, diffuse softbox), Materials (e.g. Herringbone Oak floor), Furniture pieces, and Color Palette...",
@@ -45,16 +49,8 @@ export const planRealEstateRenovation = async (
     `;
 
     const config = {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            visualPrompt: { type: Type.STRING },
-            structuredBrief: { type: Type.STRING }
-          },
-          required: ["visualPrompt", "structuredBrief"]
-        }
-    } as any;
+        responseMimeType: "application/json"
+    };
 
     const response = await callWithRetry<GenerateContentResponse>(
       () => ai.models.generateContent({
@@ -62,14 +58,14 @@ export const planRealEstateRenovation = async (
         contents: { parts: [{ text: prompt }] },
         config
       }),
-      3,
-      2000,
+      2,
+      1000,
       model,
-      () => ai.models.generateContent({
+      [() => ai.models.generateContent({
         model: backupModel,
         contents: { parts: [{ text: prompt }] },
         config
-      })
+      })]
     );
 
     const data = JSON.parse(cleanJson(response.text || "{}"));
@@ -90,8 +86,8 @@ export const generateFitOutSpecs = async (
 ): Promise<string> => {
   return executeManagedTask('REPORTING', async () => {
     const ai = getAI();
-    const model = "gemini-3.1-pro-preview";
-    const backupModel = "gemini-3-flash-preview";
+    const model = MODELS.TEXT_PRIMARY;
+    const backupModel = MODELS.TEXT_FAST;
 
     const prompt = `
       VAI TRÒ: KỸ SƯ DỰ TOÁN NỘI THẤT (QS/QC).
@@ -118,10 +114,10 @@ export const generateFitOutSpecs = async (
 
     const response = await callWithRetry<GenerateContentResponse>(
       () => ai.models.generateContent({ model, contents: { parts: [{ text: prompt }] } }),
-      3,
-      2000,
+      2,
+      1000,
       model,
-      () => ai.models.generateContent({ model: backupModel, contents: { parts: [{ text: prompt }] } })
+      [() => ai.models.generateContent({ model: backupModel, contents: { parts: [{ text: prompt }] } })]
     );
 
     return response.text || "Đã lập bảng tiêu chuẩn hoàn thiện.";

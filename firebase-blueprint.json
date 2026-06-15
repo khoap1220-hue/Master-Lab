@@ -1,0 +1,113 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "Stores user-specific settings and profile information.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Firebase Auth UID" },
+        "email": { "type": "string", "format": "email" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "lastLogin": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email"]
+    },
+    "Brand": {
+      "title": "Brand Identity",
+      "description": "Stores brand identity and associated projects.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "ownerId": { "type": "string", "description": "UID of the owner" },
+        "name": { "type": "string" },
+        "logoUrl": { "type": "string" },
+        "primaryColor": { "type": "string" },
+        "secondaryColor": { "type": "string" },
+        "accentColor": { "type": "string" },
+        "fontFamily": { "type": "string" },
+        "toneOfVoice": { "type": "string" },
+        "lastUpdated": { "type": "string", "format": "date-time" },
+        "projects": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "name": { "type": "string" },
+              "imageUrl": { "type": "string" },
+              "date": { "type": "string" }
+            }
+          }
+        }
+      },
+      "required": ["ownerId", "name", "lastUpdated"]
+    },
+    "ChatMessage": {
+      "title": "Chat Message",
+      "description": "Stores individual chat messages for a user.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "ownerId": { "type": "string" },
+        "role": { "type": "string", "enum": ["user", "assistant", "system"] },
+        "text": { "type": "string" },
+        "image": { "type": "string" },
+        "imageLabel": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "modelUsed": { "type": "string" }
+      },
+      "required": ["ownerId", "role", "text", "timestamp"]
+    },
+    "NeuralMemory": {
+      "title": "Neural Memory",
+      "description": "Stores the neural memory state for a user.",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string" },
+        "currentFocus": { "type": "string" },
+        "coreIntent": { "type": "string" },
+        "systemAuthorityLevel": { "type": "number" },
+        "semanticKB": { "type": "object" },
+        "lastUpdated": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ownerId", "lastUpdated"]
+    },
+    "NeuralEvent": {
+      "title": "Neural Event",
+      "description": "Stores system events and logs.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "type": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "metadata": { "type": "object" },
+        "snapshot": { "type": "object" }
+      },
+      "required": ["userId", "type", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profile document"
+    },
+    "/brands/{brandId}": {
+      "schema": "Brand",
+      "description": "Brand identity documents"
+    },
+    "/messages/{messageId}": {
+      "schema": "ChatMessage",
+      "description": "Chat history for all users"
+    },
+    "/memory/{userId}": {
+      "schema": "NeuralMemory",
+      "description": "Neural memory state for each user"
+    },
+    "/registry/{eventId}": {
+      "schema": "NeuralEvent",
+      "description": "System events and logs"
+    }
+  }
+}

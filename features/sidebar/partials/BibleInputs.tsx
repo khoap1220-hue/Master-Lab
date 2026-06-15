@@ -1,5 +1,6 @@
 
 import React from 'react';
+import { Button } from '../../../components/ui/Button';
 
 interface BibleInputsProps {
   usagePurpose: string;
@@ -23,7 +24,7 @@ const BibleInputs: React.FC<BibleInputsProps> = ({
           value={usagePurpose}
           onChange={(e) => setUsagePurpose(e.target.value)}
           placeholder="Ví dụ: Dùng để gọi vốn (Pitch Deck), Đào tạo nội bộ, Nhượng quyền thương mại, Ra mắt công chúng..."
-          className="w-full h-20 bg-slate-900/50 border border-orange-500/30 rounded-xl p-3 text-xs text-white placeholder-slate-600 focus:ring-1 focus:ring-orange-500 focus:border-orange-500 transition-all resize-none"
+          className="w-full h-20 bg-zinc-900/50 border border-orange-500/30 rounded-xl p-3 text-xs text-white placeholder-zinc-600 focus:ring-1 focus:ring-orange-500 focus:border-orange-500 transition-all resize-none"
         />
       </div>
 
@@ -35,13 +36,14 @@ const BibleInputs: React.FC<BibleInputsProps> = ({
           </label>
           <div className="grid grid-cols-4 gap-2">
               {[10, 20, 30, 40].map(count => (
-                <button
+                <Button
                   key={count}
+                  variant="outline"
                   onClick={() => setBiblePageCount(count)}
-                  className={`py-2 rounded-lg text-[10px] font-black transition-all ${biblePageCount === count ? 'bg-orange-600 text-white shadow-lg shadow-orange-900/20' : 'bg-slate-900 text-slate-500 border border-slate-700 hover:text-white'}`}
+                  className={`py-2 rounded-lg text-[10px] font-black transition-all h-auto ${biblePageCount === count ? 'bg-orange-600 text-white shadow-lg shadow-orange-900/20 border-orange-500' : 'bg-zinc-900 text-zinc-500 border-zinc-700 hover:text-white hover:bg-zinc-800'}`}
                 >
                   {count}P
-                </button>
+                </Button>
               ))}
           </div>
       </div>

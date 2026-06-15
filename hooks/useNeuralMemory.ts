@@ -2,42 +2,58 @@
 import { useState, useEffect } from 'react';
 import { MemoryInsight, NeuralEvent } from '../types';
 import { INITIAL_MEMORY } from '../data/constants';
-import * as memoryService from '../services/memoryService';
-import * as registryService from '../services/registryService';
 
-export const useNeuralMemory = () => {
+// Firebase
+import { db, handleFirestoreError, OperationType } from '../firebase';
+import { doc, onSnapshot, setDoc, collection, query, where, orderBy, limit } from 'firebase/firestore';
+import { User } from 'firebase/auth';
+
+export const useNeuralMemory = (user: User | null) => {
   const [memory, setMemory] = useState<MemoryInsight>(INITIAL_MEMORY);
   const [showMemory, setShowMemory] = useState(false);
   const [registry, setRegistry] = useState<NeuralEvent[]>([]);
 
-  // Initial Load + Event Listeners for Live Updates
+  // Sync Memory from Firestore
   useEffect(() => {
-    const loadData = () => {
-        const loadedMem = memoryService.loadMemoryFromLocal();
-        if (loadedMem) setMemory(loadedMem);
-        
-        const loadedReg = registryService.getEvents();
-        setRegistry(loadedReg);
-    };
-
-    // Load initially
-    loadData();
-
-    // Listen for updates from other services
-    const handleUpdate = () => loadData();
-    
-    if (typeof window !== 'undefined') {
-        window.addEventListener('NEURAL_REGISTRY_UPDATE', handleUpdate);
-        window.addEventListener('NEURAL_MEMORY_UPDATE', handleUpdate);
+    if (!user) {
+      setMemory(INITIAL_MEMORY);
+      return;
     }
 
-    return () => {
-        if (typeof window !== 'undefined') {
-            window.removeEventListener('NEURAL_REGISTRY_UPDATE', handleUpdate);
-            window.removeEventListener('NEURAL_MEMORY_UPDATE', handleUpdate);
-        }
-    };
-  }, []);
+    const memoryRef = doc(db, 'memory', user.uid);
+    const unsubscribe = onSnapshot(memoryRef, (docSnap) => {
+      if (docSnap.exists()) {
+        setMemory(docSnap.data() as MemoryInsight);
+      } else {
+        // Initialize if not exists
+        setDoc(memoryRef, INITIAL_MEMORY).catch(err => handleFirestoreError(err, OperationType.WRITE, `memory/${user.uid}`));
+      }
+    }, (err) => handleFirestoreError(err, OperationType.GET, `memory/${user.uid}`));
+
+    return () => unsubscribe();
+  }, [user]);
+
+  // Sync Registry from Firestore
+  useEffect(() => {
+    if (!user) {
+      setRegistry([]);
+      return;
+    }
+
+    const q = query(
+      collection(db, 'registry'),
+      where('userId', '==', user.uid),
+      orderBy('timestamp', 'desc'),
+      limit(50)
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const events = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as NeuralEvent));
+      setRegistry(events);
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'registry'));
+
+    return () => unsubscribe();
+  }, [user]);
 
   return {
     memory,

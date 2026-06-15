@@ -12,6 +12,7 @@ export interface CanvasViewportRef {
 
 interface CanvasViewportProps {
   image: string;
+  isVideo?: boolean;
   mode: 'draw' | 'erase' | 'pin' | 'extract' | 'enrich' | 'design_recovery' | 'mockup';
   brushSize: number;
   onAddPin: (x: number, y: number) => void;
@@ -21,9 +22,10 @@ interface CanvasViewportProps {
 }
 
 const CanvasViewport = forwardRef<CanvasViewportRef, CanvasViewportProps>(({ 
-  image, mode, brushSize, onAddPin, onUiScaleChange, onMovePin, children 
+  image, isVideo, mode, brushSize, onAddPin, onUiScaleChange, onMovePin, children 
 }, ref) => {
   const imgRef = useRef<HTMLImageElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null); 
   const containerRef = useRef<HTMLDivElement>(null);
   const cursorPreviewRef = useRef<HTMLDivElement>(null);
@@ -38,8 +40,9 @@ const CanvasViewport = forwardRef<CanvasViewportRef, CanvasViewportProps>(({
       return maskLayerRef.current?.getMask() || null;
     },
     getComposite: () => {
-      if (!imgRef.current) return null;
-      return maskLayerRef.current?.getComposite(imgRef.current) || null;
+      const source = isVideo ? videoRef.current : imgRef.current;
+      if (!source) return null;
+      return maskLayerRef.current?.getComposite(source) || null;
     },
     clear: () => {
       maskLayerRef.current?.clear();
@@ -48,24 +51,40 @@ const CanvasViewport = forwardRef<CanvasViewportRef, CanvasViewportProps>(({
       maskLayerRef.current?.undo();
     },
     getNaturalDimensions: () => {
+      if (isVideo && videoRef.current) {
+        return { width: videoRef.current.videoWidth, height: videoRef.current.videoHeight };
+      }
       if (!imgRef.current) return null;
       return { width: imgRef.current.naturalWidth, height: imgRef.current.naturalHeight };
     }
   }));
 
   const updateViewport = useCallback(() => {
-    const img = imgRef.current;
+    const source = isVideo ? videoRef.current : imgRef.current;
     const container = containerRef.current;
     
-    if (!img || !img.complete || img.naturalWidth === 0 || !container) return;
+    if (!source || !container) return;
+    
+    let naturalWidth = 0;
+    let naturalHeight = 0;
+    
+    if (isVideo) {
+      const video = source as HTMLVideoElement;
+      if (video.videoWidth === 0) return;
+      naturalWidth = video.videoWidth;
+      naturalHeight = video.videoHeight;
+    } else {
+      const img = source as HTMLImageElement;
+      if (!img.complete || img.naturalWidth === 0) return;
+      naturalWidth = img.naturalWidth;
+      naturalHeight = img.naturalHeight;
+    }
 
     const containerWidth = container.clientWidth;
     const containerHeight = container.clientHeight;
     
     if (containerWidth === 0 || containerHeight === 0) return;
 
-    const naturalWidth = img.naturalWidth;
-    const naturalHeight = img.naturalHeight;
     const imageRatio = naturalWidth / naturalHeight;
     const containerRatio = containerWidth / containerHeight;
 
@@ -93,7 +112,7 @@ const CanvasViewport = forwardRef<CanvasViewportRef, CanvasViewportProps>(({
     setDimensions({ width: naturalWidth, height: naturalHeight });
     onUiScaleChange(newScale);
 
-  }, [onUiScaleChange]);
+  }, [onUiScaleChange, isVideo]);
 
   const handleCursorMove = (e: React.MouseEvent | React.TouchEvent) => {
     if (!cursorPreviewRef.current || !viewportRef.current) return;
@@ -170,7 +189,7 @@ const CanvasViewport = forwardRef<CanvasViewportRef, CanvasViewportProps>(({
   };
 
   return (
-    <div ref={containerRef} className="relative flex-1 bg-black rounded-[2.5rem] overflow-hidden flex items-center justify-center border border-slate-800 shadow-3xl select-none touch-none">
+    <div ref={containerRef} className="relative flex-1 bg-black rounded-[2.5rem] overflow-hidden flex items-center justify-center border border-zinc-800 shadow-3xl select-none touch-none">
        <div 
          ref={viewportRef} 
          style={viewportStyle}
@@ -179,15 +198,30 @@ const CanvasViewport = forwardRef<CanvasViewportRef, CanvasViewportProps>(({
          onTouchMove={handleCursorMove}
          onClick={handlePinClick}
        >
-          <img 
-            ref={imgRef}
-            src={image} 
-            className="w-full h-full object-contain pointer-events-none select-none" 
-            draggable={false}
-            onLoad={updateViewport}
-            alt="Source"
-            decoding="async" // Async decoding for main editor image
-          />
+          {isVideo ? (
+            <video 
+              ref={videoRef}
+              src={image} 
+              className="w-full h-full object-contain pointer-events-none select-none" 
+              draggable={false}
+              onLoadedMetadata={updateViewport}
+              controls
+              autoPlay
+              loop
+              muted
+              playsInline
+            />
+          ) : (
+            <img 
+              ref={imgRef}
+              src={image} 
+              className="w-full h-full object-contain pointer-events-none select-none" 
+              draggable={false}
+              onLoad={updateViewport}
+              alt="Source"
+              decoding="async" // Async decoding for main editor image
+            />
+          )}
           
           <MaskLayer
             ref={maskLayerRef}

@@ -2,10 +2,11 @@
 import { Part, GenerateContentResponse, HarmCategory, HarmBlockThreshold } from "@google/genai";
 import { MemoryInsight, ScenarioCategory } from "../../types";
 import { getAI, callWithRetry } from "../../lib/gemini";
-import { executeManagedTask, executeDirectTier } from "../../lib/tieredExecutor"; 
+import { executeManagedTask, executeDirectTier, getExecutionTiers } from "../../lib/tieredExecutor"; 
 import { getEmpathyInstruction } from "../memoryService";
 import { getVisionarySystemInstruction, REALISM_ENFORCER, CONTENT_STRATEGIST_PROMPT, TYPOGRAPHY_PROTOCOL } from "../prompts";
 import { sanitizeAspectRatio, optimizeImagePayload } from "../../lib/utils";
+import { MODELS } from "../../config/models";
 
 const RELAXED_SAFETY = [
   { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
@@ -14,6 +15,8 @@ const RELAXED_SAFETY = [
   { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
   { category: HarmCategory.HARM_CATEGORY_CIVIC_INTEGRITY, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH }
 ];
+
+import { isProTier } from '../../config/models';
 
 const extractImage = (response: any): string | undefined => {
     if (response.generatedImages?.[0]?.image?.imageBytes) {
@@ -32,10 +35,11 @@ export const generate360ProductViews = async (
   refImage?: string 
 ): Promise<string[]> => {
   const ai = getAI();
-  // UPGRADE: Use Pro Image for 360 views to ensure texture consistency
-  const model = "gemini-3-pro-image-preview"; 
+  const isPro = isProTier();
+  // Use Flash Image for faster generation by default
+  const model = MODELS.IMAGE_PRIMARY; 
 
-  const angles = [
+  let angles = [
     { name: "Front View", detail: "Direct front view, symmetrical." },
     { name: "Back View", detail: "Rear view showing back details." },
     { name: "Left Side", detail: "90 degree left profile." },
@@ -44,6 +48,16 @@ export const generate360ProductViews = async (
     { name: "Top Down", detail: "Directly from above (Bird's eye)." },
     { name: "Detail Macro", detail: "Close-up of texture/material." }
   ];
+
+  // OPTIMIZATION: Reduce angles for Free Tier to save cost and avoid rate limits
+  if (!isPro) {
+    angles = [
+      { name: "Front View", detail: "Direct front view, symmetrical." },
+      { name: "Back View", detail: "Rear view showing back details." },
+      { name: "Isometric", detail: "3/4 perspective view from top-left." },
+      { name: "Detail Macro", detail: "Close-up of texture/material." }
+    ];
+  }
 
   // Optimize reference image if provided
   const optRef = refImage ? await optimizeImagePayload(refImage, 'generation') : null;
@@ -67,15 +81,27 @@ export const generate360ProductViews = async (
         parts.push({ inlineData: { mimeType: "image/png", data: optRef.split(',')[1] } });
     }
 
-    try {
-      const response = await ai.models.generateContent({
-        model,
+    const performFlash31 = () => ai.models.generateContent({
+        model: MODELS.IMAGE_PRIMARY,
         contents: { parts },
-        config: { imageConfig: { aspectRatio: "1:1", imageSize: "1K" }, safetySettings: RELAXED_SAFETY }
-      });
+        config: { imageConfig: { aspectRatio: "1:1" }, safetySettings: RELAXED_SAFETY }
+    });
+
+    const performPro3 = () => ai.models.generateContent({
+        model: MODELS.IMAGE_PRO,
+        contents: { parts },
+        config: { imageConfig: { aspectRatio: "1:1" }, safetySettings: RELAXED_SAFETY }
+    });
+
+    try {
+      const response = await callWithRetry<GenerateContentResponse>(
+        performFlash31, 2, 1000, 'Gemini-2.5-Flash-Image',
+        [performPro3], 120000, true
+      );
       return extractImage(response);
-    } catch (e) {
+    } catch (e: any) {
       console.warn(`Failed to generate angle ${angle.name}`, e);
+      if (e.message && e.message.includes('403')) throw e;
       return null;
     }
   };
@@ -83,7 +109,8 @@ export const generate360ProductViews = async (
   // OPTIMIZED EXECUTION: Staggered Batching to respect Rate Limits
   return executeDirectTier('BATCH', async () => {
       const results: (string | null)[] = [];
-      const BATCH_SIZE = 3; // Max 3 concurrent requests
+      const tiers = getExecutionTiers();
+      const BATCH_SIZE = tiers.BATCH.concurrency;
       
       for (let i = 0; i < angles.length; i += BATCH_SIZE) {
           const batch = angles.slice(i, i + BATCH_SIZE);
@@ -94,7 +121,8 @@ export const generate360ProductViews = async (
           
           // Slight delay between batches to cool down rate limiter
           if (i + BATCH_SIZE < angles.length) {
-              await new Promise(r => setTimeout(r, 1000));
+              const delay = tiers.BATCH.tierDelay;
+              await new Promise(r => setTimeout(r, delay));
           }
       }
       
@@ -110,67 +138,94 @@ export const generateDesignVariation = async (
   moodboardAssets?: string[],
   brandUrl?: string,
   aspectRatio: string = "1:1",
-  preserveLayout: boolean = true
-): Promise<{ image: string; text: string }> => {
-  // Use HEAVY tier to allow longer timeouts for Pro model
+  preserveLayout: boolean = true,
+  targetSize?: "1K" | "2K" | "4K"
+): Promise<{ image: string; text: string; model?: string }> => {
+  // Use HEAVY tier to allow longer timeouts
   return executeManagedTask('IMAGE_GEN_4K', async () => {
     const ai = getAI();
     const validRatio = sanitizeAspectRatio(aspectRatio);
+    const isPro = isProTier();
     
+    const imageConfig: any = { aspectRatio: validRatio };
+    if (targetSize && isPro) {
+        imageConfig.imageSize = targetSize;
+    }
+
     const promises: Promise<any>[] = [];
+    // Use 'generation' profile which resizes to max 768px and compresses
     if (logoAsset) promises.push(optimizeImagePayload(logoAsset, 'generation'));
-    if (moodboardAssets) moodboardAssets.forEach(a => promises.push(optimizeImagePayload(a, 'generation')));
+    // Limit to max 2 moodboard images to save payload size
+    const limitedMoodboards = moodboardAssets ? moodboardAssets.slice(0, 2) : [];
+    if (limitedMoodboards.length > 0) {
+        limitedMoodboards.forEach(a => promises.push(optimizeImagePayload(a, 'generation')));
+    }
 
     const optimized = await Promise.all(promises);
     const optLogo = logoAsset ? optimized[0] : null;
-    const optMoods = moodboardAssets ? (logoAsset ? optimized.slice(1) : optimized) : [];
+    const optMoods = limitedMoodboards.length > 0 ? (logoAsset ? optimized.slice(1) : optimized) : [];
 
+    // Compress the instruction to be more concise
     const instruction = `
-      ${getEmpathyInstruction(memoryInsight)}
-      ${getVisionarySystemInstruction(category)}
-      ${TYPOGRAPHY_PROTOCOL}
-      [VAI TRÒ: MASTER VISUAL VARIATIONIST & TYPOGRAPHER]
-      MỤC TIÊU THIẾT KẾ: ${goal}
+      [ROLE: MASTER VISUAL VARIATIONIST]
+      GOAL: ${goal}
       
-      *** QUY TẮC NỘI DUNG TUYỆT ĐỐI (ABSOLUTE CONTENT RULE): ***
-      - KHÔNG ĐƯỢC vẽ bất kỳ chữ nào liên quan đến 'Engine state', 'Drift', 'Evolution', 'Phase' lên hình.
-      - HÃY TỰ BỊA (Hallucinate) tên thương hiệu, slogan và nội dung bao bì chuyên nghiệp, sắc nét dựa trên mục tiêu: "${goal}".
-      - NẾU CÓ YÊU CẦU CHỮ CỤ THỂ TRONG DẤU NGOẶC KÉP, HÃY VẼ CHÍNH XÁC NÓ.
+      RULES:
+      - NO text like 'Engine state', 'Drift', 'Evolution', 'Phase'.
+      - Hallucinate professional brand name/slogan based on goal.
+      - Draw exact text if in quotes.
       
-      ${optLogo ? (preserveLayout 
-          ? `QUY TẮC CẤU TRÚC: Giữ nguyên bố cục chính của ẢNH ĐẦU TIÊN (Input 1).` 
-          : `QUY TẮC CẤU TRÚC: Giữ nguyên NỘI DUNG/THÔNG TIN của ẢNH ĐẦU TIÊN (Input 1), nhưng ĐƯỢC PHÉP SÁNG TẠO LẠI BỐ CỤC & PHONG CÁCH (Redesign Layout).`) 
-      : ''}
-      ${optMoods.length > 0 ? `QUY TẮC PHONG CÁCH: Áp dụng Palette và Texture từ CÁC ẢNH SAU.` : ''}
+      ${optLogo ? (preserveLayout ? `Keep main layout of Input 1.` : `Keep content of Input 1, redesign layout/style.`) : ''}
+      ${optMoods.length > 0 ? `Apply Palette/Texture from following images.` : ''}
     `;
 
     const parts: Part[] = [{ text: instruction }];
     if (optLogo) parts.push({ inlineData: { mimeType: "image/png", data: optLogo.split(',')[1] } });
     optMoods.forEach(m => parts.push({ inlineData: { mimeType: "image/png", data: m.split(',')[1] } }));
 
-    // UPGRADE: Primary is Pro Image for maximum quality
-    const performPro = () => ai.models.generateContent({
-        model: "gemini-3-pro-image-preview",
+    const performFlash31 = () => ai.models.generateContent({
+        model: MODELS.IMAGE_PRIMARY,
         contents: { parts },
-        config: { imageConfig: { aspectRatio: validRatio as any, imageSize: "1K" }, safetySettings: RELAXED_SAFETY }
+        config: { imageConfig, safetySettings: RELAXED_SAFETY }
     });
 
-    const performFlashBackup = () => ai.models.generateContent({
-        model: "gemini-2.5-flash-image",
+    const performPro3 = () => ai.models.generateContent({
+        model: MODELS.IMAGE_PRO,
         contents: { parts },
-        config: { imageConfig: { aspectRatio: validRatio as any }, safetySettings: RELAXED_SAFETY }
+        config: { imageConfig, safetySettings: RELAXED_SAFETY }
     });
 
-    // Prioritize Pro
-    const response = await callWithRetry<GenerateContentResponse>(
-        performPro, 3, 3000, 'Gemini-3-Pro-Image', 
-        [performFlashBackup], 300000, true 
-    );
+    // Fallback for free tier keys that don't support 4K/2K
+    const performFlash31Standard = () => {
+        console.warn("⚠️ High-res generation failed or restricted. Falling back to Standard Resolution...");
+        return ai.models.generateContent({
+            model: MODELS.IMAGE_PRIMARY,
+            contents: { parts },
+            config: { imageConfig: { aspectRatio: validRatio }, safetySettings: RELAXED_SAFETY }
+        });
+    };
 
-    const image = extractImage(response);
-    if (!image) throw new Error("Synthesis failed to yield image.");
+    // Prioritize Flash 3.1
+    let usedModel = 'Gemini-3.1-Flash-Image';
+    try {
+        const response = await callWithRetry<GenerateContentResponse>(
+            performFlash31, 2, 1000, 'Gemini-3.1-Flash-Image', 
+            [performPro3, performFlash31Standard], 600000, true,
+            (m) => usedModel = m
+        );
 
-    return { image, text: "Biến thể thiết kế (High Fidelity + Text) đã sẵn sàng." };
+        const image = extractImage(response);
+        if (!image) throw new Error("Synthesis failed to yield image.");
+
+        return { image, text: "Biến thể thiết kế (High Fidelity + Text) đã sẵn sàng.", model: usedModel };
+    } catch (error: any) {
+        if (error.message && error.message.includes('Neural Refusal')) {
+            const contentMatch = error.message.match(/Content:\s*(.*)/);
+            const textContent = contentMatch ? contentMatch[1] : error.message;
+            return { image: '', text: textContent, model: usedModel };
+        }
+        throw error;
+    }
   });
 };
 
@@ -178,11 +233,18 @@ export const generateBaseImage = async (
   prompt: string,
   memoryInsight: MemoryInsight,
   category: ScenarioCategory,
-  aspectRatio: string = "1:1"
-): Promise<{ image: string; text: string }> => {
+  aspectRatio: string = "1:1",
+  targetSize?: "1K" | "2K" | "4K"
+): Promise<{ image: string; text: string; model?: string }> => {
   return executeManagedTask('IMAGE_GEN_4K', async () => {
     const ai = getAI();
     const validRatio = sanitizeAspectRatio(aspectRatio);
+    const isPro = isProTier();
+    
+    const imageConfig: any = { aspectRatio: validRatio };
+    if (targetSize && isPro) {
+        imageConfig.imageSize = targetSize;
+    }
     
     // Include Content Strategist Prompt & Typography Protocol here too
     const instruction = `
@@ -193,15 +255,45 @@ export const generateBaseImage = async (
       Goal: ${prompt}
     `;
 
-    // UPGRADE: Use Pro Image by default
-    const performPro = () => ai.models.generateContent({
-        model: "gemini-3-pro-image-preview",
+    const performFlash31 = () => ai.models.generateContent({
+        model: MODELS.IMAGE_PRIMARY,
         contents: { parts: [{ text: instruction }] },
-        config: { imageConfig: { aspectRatio: validRatio as any, imageSize: "1K" }, safetySettings: RELAXED_SAFETY }
+        config: { imageConfig, safetySettings: RELAXED_SAFETY }
     });
 
-    const response = await callWithRetry<GenerateContentResponse>(performPro, 3, 3000, 'Base-Image-Pro', undefined, 300000, true);
-    const image = extractImage(response);
-    return { image: image!, text: "Bản vẽ Ultra-HD (Có hỗ trợ chữ) đã được khởi tạo." };
+    const performPro3 = () => ai.models.generateContent({
+        model: MODELS.IMAGE_PRO,
+        contents: { parts: [{ text: instruction }] },
+        config: { imageConfig, safetySettings: RELAXED_SAFETY }
+    });
+
+    // Fallback for free tier keys that don't support 4K/2K
+    const performFlash31Standard = () => {
+        console.warn("⚠️ High-res generation failed or restricted. Falling back to Standard Resolution...");
+        return ai.models.generateContent({
+            model: MODELS.IMAGE_PRIMARY,
+            contents: { parts: [{ text: instruction }] },
+            config: { imageConfig: { aspectRatio: validRatio }, safetySettings: RELAXED_SAFETY }
+        });
+    };
+
+    let usedModel = 'Gemini-3.1-Flash-Image';
+    try {
+        const response = await callWithRetry<GenerateContentResponse>(
+            performFlash31, 2, 1000, 'Gemini-3.1-Flash-Image', 
+            [performPro3, performFlash31Standard], 600000, true,
+            (m) => usedModel = m
+        );
+        const image = extractImage(response);
+        if (!image) throw new Error("Synthesis failed to yield image.");
+        return { image: image, text: "Bản vẽ Ultra-HD (Có hỗ trợ chữ) đã được khởi tạo.", model: usedModel };
+    } catch (error: any) {
+        if (error.message && error.message.includes('Neural Refusal')) {
+            const contentMatch = error.message.match(/Content:\s*(.*)/);
+            const textContent = contentMatch ? contentMatch[1] : error.message;
+            return { image: '', text: textContent, model: usedModel };
+        }
+        throw error;
+    }
   });
 };

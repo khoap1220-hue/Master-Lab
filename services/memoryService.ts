@@ -1,8 +1,10 @@
 
-import { Type, GenerateContentResponse } from "@google/genai";
+import { GenerateContentResponse } from "@google/genai";
 import { ChatMessage, MemoryInsight } from "../types";
 import { getAI, callWithRetry } from "../lib/gemini";
 import { createEvent, saveEvent } from "./registryService"; // Import Registry
+import { cleanJson } from "./orchestrator/utils";
+import { MODELS } from "../config/models";
 
 const MEMORY_KEY = "VISUAL_EMPATHY_MASTER_MEMORY_V6";
 export const NEURAL_MEMORY_EVENT = 'NEURAL_MEMORY_UPDATE';
@@ -38,25 +40,23 @@ export const distillMemory = async (
   previousInsight?: MemoryInsight
 ): Promise<MemoryInsight> => {
   const ai = getAI();
-  const primaryModel = "gemini-3.1-pro-preview";
-  const backupModel = "gemini-2.5-flash-image"; 
+  const primaryModel = MODELS.TEXT_FAST; // Use FAST model for memory distillation to save tokens
+  const backupModel = MODELS.TEXT_PRIMARY; 
 
-  const historyData = currentHistory.slice(-20).map(m => ({
+  // Reduce history to last 10 messages to save tokens
+  const historyData = currentHistory.slice(-10).map(m => ({
     role: m.role.toUpperCase(),
-    text: m.text,
-    feedback: m.feedback || 'none'
+    text: m.text.substring(0, 500) // Truncate long texts
   }));
 
   const prompt = `
-    [SYSTEM ROLE: NEURAL ARCHITECT & MEMORY KEEPER]
-    TASK: Distill the conversation into structured knowledge.
-    
+    [ROLE: MEMORY KEEPER]
     OLD MEMORY: ${JSON.stringify(previousInsight || {})}
     NEW INTERACTIONS: ${JSON.stringify(historyData)}
     
-    GOAL: Update the 'Semantic Knowledge Base'.
+    Update 'Semantic Knowledge Base'.
     - currentFocus: What is the user working on NOW?
-    - styleTrends: Keywords about visual style mentioned (e.g. Minimalist, Cyberpunk).
+    - styleTrends: Keywords about visual style mentioned.
     - aestheticEvolution: How has the design direction changed?
     - strategicGoals: What are they trying to achieve?
     
@@ -65,28 +65,7 @@ export const distillMemory = async (
 
   try {
     const config = {
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          currentFocus: { type: Type.STRING },
-          transientPreferences: { type: Type.ARRAY, items: { type: Type.STRING } },
-          semanticKB: {
-            type: Type.OBJECT,
-            properties: {
-              projects: { type: Type.ARRAY, items: { type: Type.STRING } },
-              technicalRules: { type: Type.ARRAY, items: { type: Type.STRING } },
-              aestheticEvolution: { type: Type.STRING },
-              strategicGoals: { type: Type.ARRAY, items: { type: Type.STRING } },
-              creativeDrift: { type: Type.NUMBER },
-              styleTrends: { type: Type.ARRAY, items: { type: Type.STRING } }
-            }
-          },
-          entities: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { name: {type:Type.STRING} } } },
-          coreIntent: { type: Type.STRING },
-          systemAuthorityLevel: { type: Type.NUMBER }
-        }
-      }
+      responseMimeType: "application/json"
     };
 
     const startTime = Date.now();
@@ -105,16 +84,15 @@ export const distillMemory = async (
 
     const response = await callWithRetry<GenerateContentResponse>(
         performPrimary, 
-        3, 
-        2000, 
+        2, 
+        1000, 
         primaryModel, 
-        performBackup
+        [performBackup]
     );
 
-    const newInsight = JSON.parse(response.text || "{}");
+    const newInsight = JSON.parse(cleanJson(response.text || "{}"));
     
-    // Save & Log
-    saveMemoryToLocal(newInsight);
+    // Log event (Registry service will handle Firestore if updated)
     saveEvent(createEvent('MEMORY_DISTILL', { 
         model: primaryModel, 
         latency: Date.now() - startTime, 

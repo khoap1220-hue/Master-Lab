@@ -1,11 +1,10 @@
-import { GoogleGenAI } from "@google/genai";
 import { BatchJob, ProcessStatus } from "../../../../types";
-import { getAI } from "../../../../lib/gemini";
-import { optimizeImagePayload } from "../../../../lib/utils";
+import { optimizeImagePayload, cropToAspectRatio } from "../../../../lib/utils";
+import { MODELS } from "../../../../config/models";
+import { getAI, callWithRetry } from "../../../../lib/gemini";
+import { executeManagedTask } from "../../../../lib/tieredExecutor";
 
 declare global {
-    // FIX: Changed to a named interface to resolve subsequent property declaration error.
-    // This ensures consistency with other parts of the codebase that define window.aistudio.
     interface AIStudio {
         hasSelectedApiKey: () => Promise<boolean>;
         openSelectKey: () => Promise<void>;
@@ -22,7 +21,10 @@ const pollOperation = async (ai: any, initialOp: any, onProgress: (updates: Part
     let operation = initialOp;
     while (!operation.done) {
         await new Promise(resolve => setTimeout(resolve, 5000)); // Poll faster
-        operation = await ai.operations.getVideosOperation({ operation: operation });
+        
+        operation = await executeManagedTask('VIDEO_GEN', async () => {
+            return await ai.operations.getVideosOperation({ operation: operation });
+        });
 
         // --- RICH PROGRESS REPORTING ---
         const metadata = operation.metadata;
@@ -32,7 +34,6 @@ const pollOperation = async (ai: any, initialOp: any, onProgress: (updates: Part
                 progressMessage: metadata.progress_message || `Đang render... ${metadata.progress_percentage}%`
             });
         } else {
-            // Fallback for older API or different metadata structure
             onProgress({ progressMessage: "Đang xử lý video..." });
         }
     }
@@ -54,24 +55,19 @@ export const generateVeoVideo = async (
 
     try {
         // --- API KEY SELECTION FLOW (CRITICAL FOR VEO) ---
-        if (window.aistudio && typeof window.aistudio.hasSelectedApiKey === 'function') {
+        if (process.env.GEMINI_API_KEY || process.env.API_KEY) {
+            // Server-provided background key is present, proceed
+        } else if (window.aistudio && typeof window.aistudio.hasSelectedApiKey === 'function') {
             const hasKey = await window.aistudio.hasSelectedApiKey();
             if (!hasKey) {
                 updateJobStatus(job.id, 'rendering_video', { 
                     progressMessage: "Yêu cầu API Key trả phí để render video. Đang mở hộp thoại..." 
                 });
                 await window.aistudio.openSelectKey();
-                // Per docs, assume success and proceed.
             }
         }
 
-        // --- DYNAMIC AI INSTANCE (DO NOT USE SINGLETON FOR VEO) ---
-        const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY;
-        if (!apiKey) {
-            throw new Error("API Key is missing. Please select a key or check your configuration.");
-        }
-        const ai = new GoogleGenAI({ apiKey }); 
-        const model = "veo-3.1-generate-preview";
+        const model = MODELS.VIDEO_PRO;
         const shots = job.viralPlan.shots;
         
         // --- PHASE 1: RENDER HOOK (BASE VIDEO) ---
@@ -79,15 +75,31 @@ export const generateVeoVideo = async (
         updateJobStatus(job.id, 'rendering_video', { progressMessage: "Neural Phase 1: Rendering Hook..." });
         
         const startFrame = hookShot.keyframeImage || job.originalUrl;
-        const optStartFrame = await optimizeImagePayload(startFrame, 'upscale_input');
+        let optStartFrame = await optimizeImagePayload(startFrame, 'upscale_input');
+        optStartFrame = await cropToAspectRatio(optStartFrame, '9:16');
 
-        let currentOp = await ai.models.generateVideos({
+        const videoParams = {
             model,
             prompt: `[SHOT 1: HOOK] ${hookShot.visual_prompt}. Cinematic, high quality. Action matches script: ${hookShot.audio_script}`,
             image: { imageBytes: optStartFrame.split(',')[1], mimeType: 'image/png' },
-            config: { numberOfVideos: 1, resolution: '720p', aspectRatio: '9:16' }
+            config: { 
+                numberOfVideos: 1, 
+                resolution: '720p', 
+                aspectRatio: '9:16',
+                durationSeconds: hookShot.duration || 5
+            }
+        };
+
+        let currentOp = await executeManagedTask('VIDEO_GEN', async () => {
+            const ai = getAI();
+            return await callWithRetry<any>(
+                () => ai.models.generateVideos(videoParams),
+                2, 2000, model,
+                [] // Empty array for no fallbacks
+            );
         });
 
+        const ai = getAI();
         currentOp = await pollOperation(ai, currentOp, (updates) => updateJobStatus(job.id, 'rendering_video', { ...updates, progressMessage: `Shot 1: ${updates.progressMessage}` }));
 
         // --- PHASE 2: SEQUENTIAL EXTENSIONS ---
@@ -99,11 +111,25 @@ export const generateVeoVideo = async (
 
             const lastVideo = currentOp.response?.generatedVideos?.[0]?.video;
 
-            currentOp = await ai.models.generateVideos({
+            const extensionParams = {
                 model,
                 video: lastVideo,
                 prompt: `[STORY CONTINUATION] Character and environment continuity. ${shot.visual_prompt}. Action strictly matches audio script: ${shot.audio_script}`,
-                config: { numberOfVideos: 1, resolution: '720p', aspectRatio: '9:16' }
+                config: { 
+                    numberOfVideos: 1, 
+                    resolution: '720p', 
+                    aspectRatio: '9:16',
+                    durationSeconds: shot.duration || 5
+                }
+            };
+
+            currentOp = await executeManagedTask('VIDEO_GEN', async () => {
+                const ai = getAI();
+                return await callWithRetry<any>(
+                    () => ai.models.generateVideos(extensionParams),
+                    2, 2000, model,
+                    [] // Empty array for no fallbacks
+                );
             });
 
             currentOp = await pollOperation(ai, currentOp, (updates) => updateJobStatus(job.id, 'rendering_video', { ...updates, progressMessage: `${shotName}: ${updates.progressMessage}` }));
@@ -113,6 +139,7 @@ export const generateVeoVideo = async (
         const finalVideoUri = currentOp.response?.generatedVideos?.[0]?.video?.uri;
         if (!finalVideoUri) throw new Error("Neural Extension hoàn tất nhưng không tìm thấy URI.");
 
+        const apiKey = (ai as any).apiKey || process.env.API_KEY || process.env.GEMINI_API_KEY;
         const urlObj = new URL(finalVideoUri);
         urlObj.searchParams.set('key', apiKey);
         
@@ -130,9 +157,16 @@ export const generateVeoVideo = async (
 
     } catch (error: any) {
         console.error("Sequence Error:", error);
-        // --- API KEY ERROR HANDLING ---
-        if (error.message && error.message.includes("Requested entity was not found.")) {
+        const errStr = error.message || "";
+        if (errStr.includes("Requested entity was not found.")) {
              updateJobStatus(job.id, 'failed', { error: "API Key không hợp lệ hoặc hết hạn. Vui lòng chọn lại Key từ một Project đã bật thanh toán." });
+             return;
+        }
+        if (errStr.includes("403") || errStr.toLowerCase().includes("permission") || errStr.toLowerCase().includes("billing") || errStr.toLowerCase().includes("thanh toán") || errStr.toLowerCase().includes("paid project")) {
+             updateJobStatus(job.id, 'failed', { error: "Lỗi phân quyền (403): Mô hình Veo yêu cầu API Key từ một Project Google Cloud đã kích hoạt thanh toán. Vui lòng mở Settings (Bánh răng ở góc trên bên phải) -> Secrets để chọn API Key từ một Paid Project." });
+             if (window.aistudio && typeof window.aistudio.openSelectKey === 'function') {
+                 window.aistudio.openSelectKey().catch(console.error);
+             }
              return;
         }
         updateJobStatus(job.id, 'failed', { error: `Render bị gián đoạn: ${error.message}` });

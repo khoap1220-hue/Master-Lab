@@ -1,9 +1,10 @@
 
-import { GenerateContentResponse, Type } from "@google/genai";
-import { MemoryInsight, GroundingSource } from "../../types";
+import { GenerateContentResponse } from "@google/genai";
+import { GroundingSource } from "../../types";
 import { getAI, callWithRetry } from "../../lib/gemini";
 import { executeManagedTask } from "../../lib/tieredExecutor";
 import { cleanJson } from "./utils";
+import { MODELS } from "../../config/models";
 
 /**
  * Fashion Strategy Planning
@@ -19,8 +20,8 @@ export const planFashionCollection = async (
 }> => {
   return executeManagedTask('STRATEGY_PLANNING', async () => {
     const ai = getAI();
-    const model = "gemini-3.1-pro-preview";
-    const backupModel = "gemini-3-flash-preview";
+    const model = MODELS.TEXT_PRIMARY;
+    const backupModel = MODELS.TEXT_FAST;
 
     const prompt = `
       VAI TRÒ: GIÁM ĐỐC SÁNG TẠO THỜI TRANG (CREATIVE DIRECTOR).
@@ -40,17 +41,8 @@ export const planFashionCollection = async (
     `;
 
     const config = {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            visualPrompt: { type: Type.STRING },
-            structuredBrief: { type: Type.STRING },
-            trendsSummary: { type: Type.STRING }
-          },
-          required: ["visualPrompt", "structuredBrief"]
-        }
-    } as any;
+        responseMimeType: "application/json"
+    };
 
     const response = await callWithRetry<GenerateContentResponse>(
       () => ai.models.generateContent({
@@ -58,14 +50,14 @@ export const planFashionCollection = async (
         contents: { parts: [{ text: prompt }] },
         config
       }),
-      3,
-      2000,
+      2,
+      1000,
       model,
-      () => ai.models.generateContent({
+      [() => ai.models.generateContent({
         model: backupModel,
         contents: { parts: [{ text: prompt }] },
         config
-      })
+      })]
     );
 
     const data = JSON.parse(cleanJson(response.text || "{}"));
@@ -87,8 +79,8 @@ export const generateTechPack = async (
 ): Promise<string> => {
   return executeManagedTask('REPORTING', async () => {
     const ai = getAI();
-    const model = "gemini-3.1-pro-preview";
-    const backupModel = "gemini-3-flash-preview";
+    const model = MODELS.TEXT_PRIMARY;
+    const backupModel = MODELS.TEXT_FAST;
 
     const prompt = `
       VAI TRÒ: KỸ THUẬT VIÊN MAY MẶC (GARMENT TECHNOLOGIST).
@@ -117,10 +109,10 @@ export const generateTechPack = async (
 
     const response = await callWithRetry<GenerateContentResponse>(
       () => ai.models.generateContent({ model, contents: { parts: [{ text: prompt }] } }),
-      3,
-      2000,
+      2,
+      1000,
       model,
-      () => ai.models.generateContent({ model: backupModel, contents: { parts: [{ text: prompt }] } })
+      [() => ai.models.generateContent({ model: backupModel, contents: { parts: [{ text: prompt }] } })]
     );
 
     return response.text || "Đã lập hồ sơ Tech Pack.";

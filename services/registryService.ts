@@ -1,23 +1,38 @@
 
 import { NeuralEvent, MemoryInsight } from "../types";
+import { auth, db, handleFirestoreError, OperationType } from "../firebase";
+import { collection, addDoc, serverTimestamp } from "firebase/firestore";
 
 const REGISTRY_KEY = "NEURAL_REGISTRY_LOG_V6";
 
 // Create custom event for real-time UI updates
 export const NEURAL_UPDATE_EVENT = 'NEURAL_REGISTRY_UPDATE';
 
-export const saveEvent = (event: NeuralEvent) => {
+export const saveEvent = async (event: NeuralEvent) => {
+  // 1. Local Fallback (for immediate UI feedback if needed)
   try {
     const events = getEvents();
-    const updated = [event, ...events].slice(0, 50); // Keep last 50 events
+    const updated = [event, ...events].slice(0, 50);
     localStorage.setItem(REGISTRY_KEY, JSON.stringify(updated));
-    
-    // Dispatch event to notify listeners (Hooks/UI)
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new Event(NEURAL_UPDATE_EVENT));
     }
   } catch (e) {
-    console.warn("Storage quota exceeded, could not save event log.", e);
+    console.warn("Local storage error:", e);
+  }
+
+  // 2. Firestore Sync
+  const user = auth.currentUser;
+  if (user) {
+    try {
+      await addDoc(collection(db, 'registry'), {
+        ...event,
+        userId: user.uid,
+        timestamp: serverTimestamp()
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, 'registry');
+    }
   }
 };
 

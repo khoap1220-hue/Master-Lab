@@ -3,9 +3,10 @@ import { Part, GenerateContentResponse, HarmCategory, HarmBlockThreshold } from 
 import { MemoryInsight, ScenarioCategory } from "../../types";
 import { getAI, callWithRetry } from "../../lib/gemini";
 import { executeManagedTask } from "../../lib/tieredExecutor";
-import { getVisionarySystemInstruction, REALISM_ENFORCER, CONTENT_STRATEGIST_PROMPT, ANTI_LAZINESS_PROTOCOL } from "../prompts";
+import { getVisionarySystemInstruction, REALISM_ENFORCER, CONTENT_STRATEGIST_PROMPT, ANTI_LAZINESS_PROTOCOL, getOutputFormatRules } from "../prompts";
 import { getEmpathyInstruction } from "../memoryService";
 import { getClosestAspectRatio, sanitizeAspectRatio, optimizeImagePayload } from "../../lib/utils";
+import { MODELS } from "../../config/models";
 
 export const pixelSmithEdit = async (
   prompt: string,
@@ -18,7 +19,7 @@ export const pixelSmithEdit = async (
   compositeContent?: string | null,
   refImageContent?: string,
   contextImages: {label: string, data: string}[] = []
-): Promise<{ image?: string; text: string }> => {
+): Promise<{ image?: string; text: string; model?: string }> => {
   return executeManagedTask('IMAGE_EDIT_COMPLEX', async () => {
     const ai = getAI();
     const detectedRatio = await getClosestAspectRatio(imageContent);
@@ -26,6 +27,10 @@ export const pixelSmithEdit = async (
     
     const isLogoMode = category === 'Logo Design';
     const isCompositing = !!refImageContent || contextImages.length > 0;
+    const formatRules = getOutputFormatRules(category);
+
+    // Limit context images to max 2 to save payload size
+    const limitedContextImages = contextImages.slice(0, 2);
 
     // SMART PRE-OPTIMIZATION (v2)
     const promises: Promise<any>[] = [optimizeImagePayload(imageContent, 'editing')];
@@ -34,8 +39,8 @@ export const pixelSmithEdit = async (
     if (compositeContent) promises.push(optimizeImagePayload(compositeContent, 'editing')); else promises.push(Promise.resolve(null));
     if (refImageContent) promises.push(optimizeImagePayload(refImageContent, 'editing')); else promises.push(Promise.resolve(null));
     
-    if (contextImages.length > 0) {
-        contextImages.forEach(img => promises.push(optimizeImagePayload(img.data, 'editing')));
+    if (limitedContextImages.length > 0) {
+        limitedContextImages.forEach(img => promises.push(optimizeImagePayload(img.data, 'editing')));
     }
 
     const optimizedResults = await Promise.all(promises);
@@ -44,40 +49,33 @@ export const pixelSmithEdit = async (
     const optMask = optimizedResults[1];
     const optComposite = optimizedResults[2];
     const optRefImage = optimizedResults[3];
-    const optContextImages = contextImages.map((img, idx) => ({
+    const optContextImages = limitedContextImages.map((img, idx) => ({
         label: img.label,
         data: optimizedResults[4 + idx]
     }));
 
     const systemPrompt = `
-      ${getEmpathyInstruction(memoryInsight)}
-      ${getVisionarySystemInstruction(category)}
-      ${ANTI_LAZINESS_PROTOCOL}
-      ${CONTENT_STRATEGIST_PROMPT}
-      ${isLogoMode ? '' : REALISM_ENFORCER}
+      [ROLE: IMAGE EDITOR & COMPOSITOR]
+      TASK: Edit or embed brand assets into [${imageLabel}].
+      REQ: "${prompt}"
+      TECH GOAL: ${targetDescription}
+      RATIO: ${ratio}
       
-      [VAI TRÒ: BIÊN TẬP VIÊN HÌNH ẢNH & NGHỆ SĨ PHỐI CẢNH]
-      [LỆNH: SINH_ẢNH_CHỈNH_SỬA]
+      QUY TẮC ĐỊNH DẠNG HÌNH ẢNH (DỰA TRÊN CATEGORY):
+      ${formatRules}
       
-      NHIỆM VỤ: Chỉnh sửa hoặc nhúng yếu tố thương hiệu vào [${imageLabel}].
-      YÊU CẦU: "${prompt}"
-      MỤC TIÊU KỸ THUẬT: ${targetDescription}
-      TỶ LỆ KHUNG HÌNH: ${ratio}
-      
-      CRITICAL RULE: DO NOT RENDER any metadata text (like 'Drift: 5', 'Phase') onto the image.
+      CRITICAL RULE: DO NOT RENDER metadata text.
       
       ${isCompositing ? `
-      *** CHẾ ĐỘ PHỐI CẢNH NEURAL (COMPOSITING) KÍCH HOẠT ***
-      Đầu vào: ẢNH NỀN + CÁC TÀI SẢN THƯƠNG HIỆU THAM CHIẾU.
-      LOGIC: Nhúng các tài sản này vào cảnh một cách vật lý. 
-      - Integration Physics: Tạo bóng đổ (Contact Shadows), Phản xạ môi trường (Environment Reflections), và Hiệu ứng Fresnel.
-      - Material Match: Nếu bề mặt có vân (gỗ, tường, vải), phải áp dụng phép biến dạng (Displacement) hoặc hòa trộn (Multiply/Overlay) để thấy rõ chất liệu.
-      - DO NOT just paste the logo flatly. It must curve with the surface.
+      *** COMPOSITING MODE ***
+      Embed assets physically. Add Contact Shadows, Reflections, Fresnel.
+      Material Match: Apply Displacement/Multiply for textures (wood, fabric).
+      DO NOT paste flatly. Curve with surface.
       ` : `
-      QUY TẮC:
-      1. TÍCH HỢP: Vùng chỉnh sửa phải hòa hợp hoàn hảo với ánh sáng, phối cảnh.
-      2. TUÂN THỦ MASK: Chỉ được thay đổi các điểm ảnh trong vùng MASK TRẮNG.
-      3. DETAIL BOOST: Khi chỉnh sửa, hãy thêm các chi tiết ngẫu nhiên (bụi, xước, vân) để tăng tính chân thực.
+      RULES:
+      1. INTEGRATION: Match lighting and perspective perfectly.
+      2. MASK COMPLIANCE: Only edit WHITE mask areas.
+      3. DETAIL BOOST: Add random micro-details (dust, scratches) for realism.
       `}
     `;
 
@@ -106,35 +104,59 @@ export const pixelSmithEdit = async (
         { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH }
     ];
 
-    // UPGRADE: Gemini 3 Pro Image is PRIMARY.
-    const performPro = () => ai.models.generateContent({
-        model: "gemini-3-pro-image-preview",
+    // UPGRADE: Gemini 3.1 Flash Image is PRIMARY.
+    const performFlash31 = () => ai.models.generateContent({
+        model: MODELS.IMAGE_PRIMARY,
         contents: { parts },
-        config: { imageConfig: { aspectRatio: ratio as any, imageSize: "1K" }, safetySettings: sharedSafety }
+        config: { imageConfig: { aspectRatio: ratio }, safetySettings: sharedSafety }
     });
 
-    const performFlashBackup = () => ai.models.generateContent({
-        model: "gemini-2.5-flash-image",
+    const performPro3 = () => ai.models.generateContent({
+        model: MODELS.IMAGE_PRO,
         contents: { parts },
-        config: { imageConfig: { aspectRatio: ratio as any }, safetySettings: sharedSafety }
+        config: { imageConfig: { aspectRatio: ratio }, safetySettings: sharedSafety }
     });
 
-    const response = await callWithRetry<GenerateContentResponse>(
-      performPro, 
-      5, 
-      2000, 
-      'Gemini-3-Pro-Edit', 
-      [performFlashBackup] 
-    );
-
-    let image: string | undefined;
-    let text = "";
-    response.candidates?.[0]?.content?.parts?.forEach(part => {
-      if (part.inlineData) image = `data:image/png;base64,${part.inlineData.data}`;
-      else if (part.text) text += part.text;
+    const performFlash25 = () => ai.models.generateContent({
+        model: MODELS.IMAGE_FAST,
+        contents: { parts },
+        config: { imageConfig: { aspectRatio: ratio }, safetySettings: sharedSafety }
     });
-    
-    if (!image) throw new Error("Mô hình không trả về ảnh chỉnh sửa.");
-    return { image, text: text.trim() || "Chỉnh sửa hoàn tất (Pro Engine)." };
+
+    let usedModel = 'Gemini-3.1-Flash-Edit';
+    try {
+        const response = await callWithRetry<GenerateContentResponse>(
+          performFlash31, 
+          2, 
+          1000, 
+          'Gemini-3.1-Flash-Edit', 
+          [performPro3, performFlash25],
+          600000,
+          true,
+          (m) => usedModel = m
+        );
+
+        let image: string | undefined;
+        let text = "";
+        
+        if ((response as any).generatedImages?.[0]?.image?.imageBytes) {
+            image = `data:image/png;base64,${(response as any).generatedImages[0].image.imageBytes}`;
+        }
+        
+        response.candidates?.[0]?.content?.parts?.forEach(part => {
+          if (part.inlineData && !image) image = `data:image/png;base64,${part.inlineData.data}`;
+          else if (part.text) text += part.text;
+        });
+        
+        if (!image) throw new Error("Mô hình không trả về ảnh chỉnh sửa.");
+        return { image, text: text.trim() || "Chỉnh sửa hoàn tất (Pro Engine).", model: usedModel };
+    } catch (error: any) {
+        if (error.message && error.message.includes('Neural Refusal')) {
+            const contentMatch = error.message.match(/Content:\s*(.*)/);
+            const textContent = contentMatch ? contentMatch[1] : error.message;
+            return { image: '', text: textContent, model: usedModel };
+        }
+        throw error;
+    }
   });
 };

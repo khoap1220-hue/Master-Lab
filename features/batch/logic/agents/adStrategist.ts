@@ -1,9 +1,10 @@
 
-import { Type, GenerateContentResponse } from "@google/genai";
+import { GenerateContentResponse } from "@google/genai";
 import { getAI, callWithRetry } from "../../../../lib/gemini";
 import { cleanJson } from "../../../../services/orchestrator/utils";
 import { executeManagedTask } from "../../../../lib/tieredExecutor";
-import { LANGUAGE_PROTOCOL } from "../../../../services/prompts";
+import { LANGUAGE_PROTOCOL, AD_CAMPAIGN_PROTOCOL } from "../../../../services/prompts";
+import { MODELS } from "../../../../config/models";
 
 /**
  * AD STRATEGIST AGENT
@@ -16,8 +17,8 @@ export const generateCampaignBatch = async (
 ): Promise<string[]> => {
     return executeManagedTask('COPYWRITING_FAST', async () => {
         const ai = getAI();
-        const model = "gemini-3-flash-preview";
-        const backupModel = "gemini-3-flash-preview";
+        const model = MODELS.TEXT_FAST;
+        const backupModel = MODELS.TEXT_FAST;
 
         const prompt = `
             [SYSTEM ROLE: SENIOR MARKETING DIRECTOR]
@@ -27,6 +28,7 @@ export const generateCampaignBatch = async (
             BRAND VIBE: "${brandVibe || 'Professional & Modern'}"
             
             ${LANGUAGE_PROTOCOL}
+            ${AD_CAMPAIGN_PROTOCOL}
 
             LANGUAGE RULES:
             - **HEADLINE**: Must be in the **SAME LANGUAGE as the INPUT CONTEXT**. Short, punchy, impactful.
@@ -54,27 +56,23 @@ export const generateCampaignBatch = async (
         `;
 
         const config = {
-            responseMimeType: "application/json",
-            responseSchema: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING }
-            }
+            responseMimeType: "application/json"
         };
 
         const response = await callWithRetry<GenerateContentResponse>(
             () => ai.models.generateContent({
                 model,
                 contents: { parts: [{ text: prompt }] },
-                config: config as any
+                config
             }),
-            3,
-            2000,
+            2,
+            1000,
             model,
-            () => ai.models.generateContent({ // Fallback
+            [() => ai.models.generateContent({ // Fallback
                 model: backupModel,
                 contents: { parts: [{ text: prompt }] },
-                config: config as any
-            })
+                config
+            })]
         );
 
         return JSON.parse(cleanJson(response.text || "[]"));

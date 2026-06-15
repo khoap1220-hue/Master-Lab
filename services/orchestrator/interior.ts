@@ -1,9 +1,11 @@
 
-import { GenerateContentResponse, Type } from "@google/genai";
-import { MemoryInsight, GroundingSource } from "../../types";
+import { GenerateContentResponse } from "@google/genai";
+import { GroundingSource } from "../../types";
 import { getAI, callWithRetry } from "../../lib/gemini";
 import { executeManagedTask } from "../../lib/tieredExecutor";
 import { cleanJson } from "./utils";
+import { ARCHITECTURAL_PROTOCOL } from "../prompts";
+import { MODELS } from "../../config/models";
 
 /**
  * Interior / Floor Plan Strategy
@@ -18,8 +20,8 @@ export const planInteriorProject = async (
 }> => {
   return executeManagedTask('STRATEGY_PLANNING', async () => {
     const ai = getAI();
-    const model = "gemini-3.1-pro-preview";
-    const backupModel = "gemini-3-flash-preview";
+    const model = MODELS.TEXT_PRIMARY;
+    const backupModel = MODELS.TEXT_FAST;
 
     const prompt = `
       VAI TRÒ: KIẾN TRÚC SƯ CHỦ TRÌ (LEAD ARCHITECT).
@@ -30,6 +32,8 @@ export const planInteriorProject = async (
       
       NHIỆM VỤ: Phân tích công năng và thẩm mỹ không gian.
       
+      ${ARCHITECTURAL_PROTOCOL}
+
       OUTPUT FORMAT (JSON):
       {
         "visualPrompt": "High-fidelity architectural prompt describing Layout, Zoning, Lighting, Materials and View Angle...",
@@ -38,16 +42,8 @@ export const planInteriorProject = async (
     `;
 
     const config = {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            visualPrompt: { type: Type.STRING },
-            structuredBrief: { type: Type.STRING }
-          },
-          required: ["visualPrompt", "structuredBrief"]
-        }
-    } as any;
+        responseMimeType: "application/json"
+    };
 
     const response = await callWithRetry<GenerateContentResponse>(
       () => ai.models.generateContent({
@@ -55,14 +51,14 @@ export const planInteriorProject = async (
         contents: { parts: [{ text: prompt }] },
         config
       }),
-      3,
-      2000,
+      2,
+      1000,
       model,
-      () => ai.models.generateContent({
+      [() => ai.models.generateContent({
         model: backupModel,
         contents: { parts: [{ text: prompt }] },
         config
-      })
+      })]
     );
 
     const data = JSON.parse(cleanJson(response.text || "{}"));
@@ -83,8 +79,8 @@ export const generateInteriorSpecs = async (
 ): Promise<string> => {
   return executeManagedTask('REPORTING', async () => {
     const ai = getAI();
-    const model = "gemini-3.1-pro-preview";
-    const backupModel = "gemini-3-flash-preview";
+    const model = MODELS.TEXT_PRIMARY;
+    const backupModel = MODELS.TEXT_FAST;
 
     const prompt = `
       VAI TRÒ: KIẾN TRÚC SƯ TRIỂN KHAI (TECHNICAL ARCHITECT).
@@ -99,10 +95,10 @@ export const generateInteriorSpecs = async (
 
     const response = await callWithRetry<GenerateContentResponse>(
       () => ai.models.generateContent({ model, contents: { parts: [{ text: prompt }] } }),
-      3,
-      2000,
+      2,
+      1000,
       model,
-      () => ai.models.generateContent({ model: backupModel, contents: { parts: [{ text: prompt }] } })
+      [() => ai.models.generateContent({ model: backupModel, contents: { parts: [{ text: prompt }] } })]
     );
 
     return response.text || "Đã lập hồ sơ kỹ thuật nội thất.";

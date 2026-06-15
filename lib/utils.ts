@@ -1,6 +1,12 @@
 
 import { Stroke } from '../types';
 import { ThinkingLevel } from '../types';
+import { clsx, type ClassValue } from 'clsx';
+import { twMerge } from 'tailwind-merge';
+
+export function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs));
+}
 
 // ... (Existing canvas utils: createMaskFromStrokes, createCompositeImage, etc.) ...
 
@@ -58,7 +64,7 @@ export const createCompositeImage = (
   width: number,
   height: number,
   strokes: Stroke[],
-  originalImage: HTMLImageElement
+  originalImage: HTMLImageElement | HTMLVideoElement
 ): string => {
   const canvas = document.createElement('canvas');
   canvas.width = width;
@@ -114,6 +120,32 @@ export const createCompositeImage = (
   return canvas.toDataURL('image/png');
 };
 
+export const base64ToBlob = (base64: string): Blob => {
+  const parts = base64.split(';base64,');
+  const contentType = parts[0].split(':')[1];
+  const raw = window.atob(parts[1]);
+  const rawLength = raw.length;
+  const uInt8Array = new Uint8Array(rawLength);
+  for (let i = 0; i < rawLength; ++i) {
+    uInt8Array[i] = raw.charCodeAt(i);
+  }
+  return new Blob([uInt8Array], { type: contentType });
+};
+
+export const base64ToBlobUrl = async (base64: string): Promise<string> => {
+  if (!base64) return base64;
+  if (base64.startsWith('blob:')) return base64;
+  
+  try {
+    const fetchRes = await fetch(base64.startsWith('data:') ? base64 : `data:image/png;base64,${base64}`);
+    const blob = await fetchRes.blob();
+    return URL.createObjectURL(blob);
+  } catch (e) {
+    console.error("Failed to convert base64 to Blob URL", e);
+    return base64; // Fallback to base64 if conversion fails
+  }
+};
+
 export const fileToBase64 = (file: File): Promise<string> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -123,9 +155,29 @@ export const fileToBase64 = (file: File): Promise<string> => {
   });
 };
 
+
+
+import { isProTier } from '../config/models';
+
 export const sanitizeAspectRatio = (ratio: string): string => {
-  const allowed = ['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9'];
-  return allowed.includes(ratio) ? ratio : '1:1';
+  const pro = isProTier();
+  const allowed = pro 
+    ? ['1:1', '3:4', '4:3', '9:16', '16:9', '1:4', '1:8', '4:1', '8:1']
+    : ['1:1', '3:4', '4:3', '9:16', '16:9'];
+
+  if (allowed.includes(ratio)) return ratio;
+  
+  if (!pro) {
+    if (ratio === '1:4' || ratio === '1:8') return '9:16';
+    if (ratio === '4:1' || ratio === '8:1') return '16:9';
+  }
+  
+  // Map unsupported ratios to the closest supported ones
+  if (ratio === '4:5' || ratio === '2:3') return '3:4';
+  if (ratio === '5:4' || ratio === '3:2') return '4:3';
+  if (ratio === '21:9') return '16:9';
+  
+  return '1:1';
 };
 
 export const getClosestAspectRatio = (base64: string): Promise<string> => {
@@ -173,6 +225,50 @@ export const getClosestAspectRatio = (base64: string): Promise<string> => {
       resolve("1:1"); 
     };
     img.src = base64;
+  });
+};
+
+export const cropToAspectRatio = (base64Image: string, targetRatio: string): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const w = img.naturalWidth;
+      const h = img.naturalHeight;
+      if (w === 0 || h === 0) return resolve(base64Image);
+
+      let targetW = w;
+      let targetH = h;
+
+      if (targetRatio === '16:9') {
+        if (w / h > 16 / 9) {
+          targetW = h * (16 / 9);
+        } else {
+          targetH = w / (16 / 9);
+        }
+      } else if (targetRatio === '9:16') {
+        if (w / h > 9 / 16) {
+          targetW = h * (9 / 16);
+        } else {
+          targetH = w / (9 / 16);
+        }
+      } else {
+        return resolve(base64Image); // Unsupported ratio for cropping here
+      }
+
+      const canvas = document.createElement('canvas');
+      canvas.width = targetW;
+      canvas.height = targetH;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return resolve(base64Image);
+
+      const offsetX = (w - targetW) / 2;
+      const offsetY = (h - targetH) / 2;
+
+      ctx.drawImage(img, offsetX, offsetY, targetW, targetH, 0, 0, targetW, targetH);
+      resolve(canvas.toDataURL('image/png'));
+    };
+    img.onerror = () => resolve(base64Image);
+    img.src = base64Image;
   });
 };
 
@@ -390,24 +486,37 @@ export const fetchRemoteAsset = async (url: string): Promise<{ mimeType: string,
 export type OptimizationTask = 'vision' | 'generation' | 'upscale_input' | 'editing' | 'masking' | 'general' | 'vector_trace';
 
 const TASK_PROFILES: Record<OptimizationTask, { maxDim: number, preserveTransparency: boolean }> = {
-  'vision': { maxDim: 768, preserveTransparency: false }, 
-  'upscale_input': { maxDim: 1024, preserveTransparency: false }, 
-  'generation': { maxDim: 1280, preserveTransparency: false }, 
-  'editing': { maxDim: 1536, preserveTransparency: true }, 
-  'masking': { maxDim: 1536, preserveTransparency: false }, 
-  'general': { maxDim: 1280, preserveTransparency: true },
-  'vector_trace': { maxDim: 800, preserveTransparency: false } 
+  'vision': { maxDim: 512, preserveTransparency: false }, // Giảm xuống 512 để tiết kiệm RAM
+  'upscale_input': { maxDim: 800, preserveTransparency: false }, 
+  'generation': { maxDim: 512, preserveTransparency: false }, // Giảm xuống 512 để tránh payload quá lớn
+  'editing': { maxDim: 800, preserveTransparency: true }, 
+  'masking': { maxDim: 800, preserveTransparency: false }, 
+  'general': { maxDim: 800, preserveTransparency: true }, 
+  'vector_trace': { maxDim: 600, preserveTransparency: false } 
 };
 
 export const optimizeImagePayload = (base64Str: string, task: OptimizationTask = 'general'): Promise<string> => {
   const profile = TASK_PROFILES[task];
-  return resizeImage(base64Str, profile.maxDim, profile.preserveTransparency);
+  const isPro = isProTier();
+  
+  // Tăng cường nén ảnh (giảm quality) để giảm dung lượng base64 gửi đi
+  // Nếu là Free Tier, nén mạnh hơn nữa để tối ưu chi phí và tốc độ
+  let quality = (task === 'generation' || task === 'vision') ? 0.5 : 0.75;
+  let maxDim = profile.maxDim;
+
+  if (!isPro) {
+    quality = (task === 'vision') ? 0.2 : Math.max(0.3, quality - 0.2); // Nén cực mạnh cho Vision ở Free Tier
+    maxDim = Math.floor(maxDim * 0.7); // Giảm thêm 30% kích thước cho Free Tier
+  }
+
+  return resizeImage(base64Str, maxDim, profile.preserveTransparency, quality);
 };
 
 export const resizeImage = (
   base64Str: string, 
   maxDimension: number = 1536,
-  preserveTransparency: boolean = false
+  preserveTransparency: boolean = false,
+  quality: number = 0.85
 ): Promise<string> => {
   return new Promise((resolve) => {
     if (!base64Str || typeof base64Str !== 'string') {
@@ -421,7 +530,8 @@ export const resizeImage = (
       let width = img.width;
       let height = img.height;
 
-      if (width <= maxDimension && height <= maxDimension) {
+      // Always process to apply compression if quality is less than 1
+      if (width <= maxDimension && height <= maxDimension && quality === 1) {
         if (preserveTransparency && base64Str.startsWith('data:image/png')) {
            resolve(base64Str);
            return;
@@ -451,7 +561,7 @@ export const resizeImage = (
           if (preserveTransparency) {
               resolve(canvas.toDataURL('image/png'));
           } else {
-              resolve(canvas.toDataURL('image/jpeg', 0.85));
+              resolve(canvas.toDataURL('image/jpeg', quality));
           }
       } else {
           resolve(base64Str);
@@ -464,17 +574,19 @@ export const resizeImage = (
   });
 };
 
+import { ThinkingLevel as GeminiThinkingLevel } from '@google/genai';
+
 /**
  * CALCULATE THINKING BUDGET (Smart Regulation)
- * Returns the token count based on User Preference and Task Complexity.
+ * Returns the ThinkingLevel enum based on User Preference.
  */
-export const calculateThinkingBudget = (userPref: ThinkingLevel = 'BALANCED'): number => {
+export const calculateThinkingBudget = (userPref: ThinkingLevel = 'BALANCED'): GeminiThinkingLevel | undefined => {
     switch (userPref) {
-        case 'FAST': return 0; // Disable thinking for speed
-        case 'BALANCED': return 8192; // 8k - Good for general analysis
-        case 'DEEP': return 16384; // 16k - Good for complex reasoning
-        case 'MAXIMUM': return 32768; // 32k - Max capacity for heavy strategy
-        default: return 8192;
+        case 'FAST': return undefined; // Disable thinking for speed
+        case 'BALANCED': return GeminiThinkingLevel.LOW; // Good for general analysis
+        case 'DEEP': return GeminiThinkingLevel.HIGH; // Good for complex reasoning
+        case 'MAXIMUM': return GeminiThinkingLevel.HIGH; // Max capacity for heavy strategy
+        default: return GeminiThinkingLevel.LOW;
     }
 };
 

@@ -1,16 +1,18 @@
 
-import { GenerateContentResponse, Type } from "@google/genai";
+import { GenerateContentResponse } from "@google/genai";
 import { MemoryInsight, WorkflowTask, SmartAction, GuidedPath, ContentProposal, GroundingSource, StrategicDNA, ScenarioCategory, MaturityScore } from "../../types";
 import { getAI, callWithRetry } from "../../lib/gemini";
 import { executeManagedTask } from "../../lib/tieredExecutor"; 
 import { getEmpathyInstruction, loadMemoryFromLocal } from "../memoryService";
 import { cleanJson } from "./utils";
 import { calculateThinkingBudget } from "../../lib/utils";
-import { LANGUAGE_PROTOCOL } from "../prompts";
+import { LANGUAGE_PROTOCOL, SMART_INFERENCE_PROTOCOL, getOutputFormatRules } from "../prompts";
+import { MODELS } from "../../config/models";
 
 const LINGUISTIC_ENFORCER = `
   [LINGUISTIC RULES v8.6]
   - ${LANGUAGE_PROTOCOL}
+  - ${SMART_INFERENCE_PROTOCOL}
   - TONE: Sharp, Empathetic, Result-Oriented.
   - FORBIDDEN: Generic responses (e.g. "optimize", "enhance" without saying HOW).
   - REQUIREMENT: Provide specific actionable solutions (e.g. "Use Serif font for luxury feel", "Use #FF4500 for appetite stimulation").
@@ -29,7 +31,7 @@ export const evaluateMaturity = async (
     // Switch to ANALYSIS_FAST tier for speed/cost efficiency
     return executeManagedTask('ANALYSIS_FAST', async () => {
         const ai = getAI();
-        const model = "gemini-3-flash-preview"; // OPTIMIZED: Use Flash instead of Pro
+        const model = MODELS.TEXT_FAST; // OPTIMIZED: Use Flash instead of Pro
         
         const prompt = `
             [SYSTEM ROLE: DESIGN AUDITOR - EMPATHY MODE]
@@ -38,8 +40,8 @@ export const evaluateMaturity = async (
             ${LINGUISTIC_ENFORCER}
             
             CATEGORY: ${category}
-            CONTEXT: "${context.substring(0, 500)}"
-            SUBJECT: "${subject.substring(0, 1500)}"
+            CONTEXT: "${(context || "").substring(0, 500)}"
+            SUBJECT: "${(subject || "").substring(0, 1500)}"
             
             FEEDBACK STRATEGY (SANDWICH):
             1. RECOGNIZE: Identify one strong point (The Top Bun).
@@ -70,7 +72,8 @@ export const evaluateMaturity = async (
                     model,
                     contents: { parts: [{ text: prompt }] },
                     config: { responseMimeType: "application/json" }
-                }), 2, 2000, model
+                }), 2, 2000, model,
+                [] // Empty array for no fallbacks
             );
             return JSON.parse(cleanJson(response.text || "{}"));
         } catch (e) {
@@ -92,52 +95,67 @@ export const suggestCreativeConcepts = async (
 ): Promise<Array<{ title: string; desc: string; style: string }>> => {
   return executeManagedTask('BRAINSTORMING', async () => {
     const ai = getAI();
-    const model = "gemini-3.1-pro-preview"; 
+    const model = MODELS.TEXT_FAST; 
     
     const memory = loadMemoryFromLocal();
-    const thinkingBudget = calculateThinkingBudget(memory?.semanticKB?.thinkingPreference || 'BALANCED');
+    const thinkingLevel = calculateThinkingBudget(memory?.semanticKB?.thinkingPreference || 'BALANCED');
+    const formatRules = getOutputFormatRules(category as ScenarioCategory);
 
     const prompt = `
-      [ROLE: STRATEGIC CREATIVE DIRECTOR v8.5]
+      [ROLE: STRATEGIC CREATIVE DIRECTOR v9.0]
       ${LINGUISTIC_ENFORCER}
       CATEGORY: ${category}
       CONTEXT: "${currentInput}"
       
-      TASK: Suggest 3 BREAKTHROUGH Visual Concepts.
+      QUY TẮC ĐỊNH DẠNG HÌNH ẢNH (DỰA TRÊN CATEGORY):
+      ${formatRules}
+      
+      TASK: Suggest 3 BREAKTHROUGH Visual Concepts that strictly adhere to the Category Format Rules.
       
       [ANTI-LAZINESS]:
       - No safe concepts. Be bold.
       - "desc": Describe Lighting, Composition, Color, and Emotion in detail.
       - "style": Must contain professional keywords (e.g., "Bauhaus", "Cyberpunk", "Minimalist Brutalism").
+      
+      OUTPUT JSON ONLY:
+      [
+        { "title": "Concept Name", "desc": "Concise Story & Symbol description...", "style": "Style Tags" }
+      ]
     `;
 
     try {
-      const response = await callWithRetry<GenerateContentResponse>(
-        () => ai.models.generateContent({
-          model,
+      const performPrimary = () => ai.models.generateContent({
+        model,
+        contents: { parts: [{ text: prompt }] },
+        config: {
+          responseMimeType: "application/json"
+        }
+      });
+
+      const performBackup = () => ai.models.generateContent({
+          model: MODELS.TEXT_PRIMARY,
           contents: { parts: [{ text: prompt }] },
           config: {
-            thinkingConfig: { thinkingBudget }, 
             responseMimeType: "application/json",
-            responseSchema: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  title: { type: Type.STRING },
-                  desc: { type: Type.STRING },
-                  style: { type: Type.STRING }
-                },
-                required: ["title", "desc", "style"]
-              }
-            }
+            ...(thinkingLevel ? { thinkingConfig: { thinkingLevel } } : {}) 
           }
-        }),
-        3, 2000, model
+      });
+
+      const performEmergency = () => ai.models.generateContent({
+          model: MODELS.TEXT_FAST,
+          contents: { parts: [{ text: prompt }] },
+          config: { responseMimeType: "application/json" }
+      });
+
+      const response = await callWithRetry<GenerateContentResponse>(
+        performPrimary,
+        2, 1000, model,
+        [performBackup, performEmergency]
       );
       
       return JSON.parse(cleanJson(response.text || "[]"));
-    } catch (e) {
+    } catch (e: any) {
+      console.error("Suggest Creative Concepts Error:", e);
       return [{ title: "Concept Generator v8", desc: "System synchronizing high-level thought process.", style: "Modern Luxury" }];
     }
   });
@@ -165,12 +183,12 @@ export const decomposeWorkflow = async (
 }> => {
   return executeManagedTask('ANALYSIS_DEEP', async () => {
     const ai = getAI();
-    const model = "gemini-3.1-pro-preview";
+    const model = MODELS.TEXT_PRIMARY;
     
-    const thinkingBudget = calculateThinkingBudget(memoryInsight?.semanticKB?.thinkingPreference || 'BALANCED');
+    const thinkingLevel = calculateThinkingBudget(memoryInsight?.semanticKB?.thinkingPreference || 'BALANCED');
 
     const prompt = `
-      [ROLE: MASTER SYSTEM ARCHITECT v8.5]
+      [ROLE: MASTER SYSTEM ARCHITECT v8.6]
       PROJECT: ${projectName} (${projectType})
       REQUEST: "${userPrompt}"
       CONTEXT: "${businessContext || 'Standard'}"
@@ -180,31 +198,52 @@ export const decomposeWorkflow = async (
       TASK: Synthesize multi-layer strategy and decompose neural execution workflow.
       
       [DEPTH REQUIREMENT]:
-      - Deep Customer Persona Analysis.
-      - Clear USP Differentiation Strategy.
+      - Deep Customer Persona Analysis (Infer if missing).
+      - Clear USP Differentiation Strategy (Propose if missing).
       - Workflow tasks must be specific (e.g. "Sketch 3 Monogram Logo Concepts" instead of "Design Logo").
     `;
 
-    const response = await callWithRetry<GenerateContentResponse>(
-      () => ai.models.generateContent({
+    const performPrimary = () => ai.models.generateContent({
         model,
         contents: { parts: [{ text: prompt }] },
         config: {
-          thinkingConfig: { thinkingBudget }, 
-          responseMimeType: "application/json"
+          ...(thinkingLevel ? { thinkingConfig: { thinkingLevel } } : {}) 
+          
         }
-      }), 3, 2000, model
-    );
+    });
 
-    const data = JSON.parse(cleanJson(response.text || "{}"));
-    return {
-        tasks: data.tasks || [],
-        masterSummary: data.masterSummary || "Synthesis complete.",
-        strategicBrief: data.strategicBrief || { brandFocus: "", visualVibe: "", marketStance: "" },
-        strategicDNA: data.strategicDNA,
-        smartActions: data.smartActions || [],
-        guidedPaths: [],
-        groundingSources: []
-    };
+    const performBackup = () => ai.models.generateContent({
+        model: MODELS.TEXT_FAST,
+        contents: { parts: [{ text: prompt }] },
+        config: {  }
+    });
+
+    const performEmergency = () => ai.models.generateContent({
+        model: MODELS.TEXT_FAST,
+        contents: { parts: [{ text: prompt }] },
+        config: {  }
+    });
+
+    try {
+      const response = await callWithRetry<GenerateContentResponse>(
+        performPrimary,
+        2, 1000, model,
+        [performBackup, performEmergency]
+      );
+
+      const data = JSON.parse(cleanJson(response.text || "{}"));
+      return {
+          tasks: data.tasks || [],
+          masterSummary: data.masterSummary || "Synthesis complete.",
+          strategicBrief: data.strategicBrief || { brandFocus: "", visualVibe: "", marketStance: "" },
+          strategicDNA: data.strategicDNA,
+          smartActions: data.smartActions || [],
+          guidedPaths: [],
+          groundingSources: []
+      };
+    } catch (e: any) {
+      console.error("Decompose Workflow Error:", e);
+      throw e;
+    }
   });
 };

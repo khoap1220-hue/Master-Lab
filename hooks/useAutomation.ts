@@ -1,7 +1,8 @@
 
 import React, { useState, useCallback } from 'react';
-import { Workflow, ScenarioCategory, MemoryInsight, ChatMessage } from '../types';
+import { Workflow, ScenarioCategory, MemoryInsight, ChatMessage, MessageRole } from '../types';
 import { dispatchWorkflow } from '../services/flows/automationOrchestrator';
+import { useToast } from '../components/Toast';
 
 interface UseAutomationProps {
   addMessage: (msg: Partial<ChatMessage>) => string;
@@ -12,6 +13,7 @@ interface UseAutomationProps {
   getNextLabel: () => string;
   memory: MemoryInsight;
   onEngineChange: (engine: string | undefined) => void;
+  onWorkflowComplete?: (workflow: Workflow) => void;
 }
 
 export const useAutomation = ({
@@ -22,14 +24,26 @@ export const useAutomation = ({
   setCurrentImage,
   getNextLabel,
   memory,
-  onEngineChange
+  onEngineChange,
+  onWorkflowComplete
 }: UseAutomationProps) => {
   const [activeWorkflows, setActiveWorkflows] = useState<Workflow[]>([]);
+  const { addToast } = useToast();
 
   // Helper to update workflow state safely
   const updateWorkflow = useCallback((id: string, updates: Partial<Workflow>) => {
-    setActiveWorkflows(prev => prev.map(wf => wf.id === id ? { ...wf, ...updates } : wf));
-  }, []);
+    setActiveWorkflows(prev => {
+      const next = prev.map(wf => wf.id === id ? { ...wf, ...updates } : wf);
+      
+      if (updates.status === 'completed' && onWorkflowComplete) {
+        const completedWf = next.find(wf => wf.id === id);
+        if (completedWf) {
+           onWorkflowComplete(completedWf);
+        }
+      }
+      return next;
+    });
+  }, [onWorkflowComplete]);
 
   const handleAutomationStart = async (
     goal: string, 
@@ -57,25 +71,34 @@ export const useAutomation = ({
     };
     setActiveWorkflows(prev => [newWorkflow, ...prev]);
 
-    // Delegate Logic to Orchestrator Service
-    await dispatchWorkflow(
-        wfId,
-        category,
-        goal,
-        batchSize,
-        { logoAsset, moodboardAssets, brandUrl, brandInfo },
-        {
-            memory,
-            addMessage,
-            setMessages,
-            onEngineChange,
-            getNextLabel,
-            updateWorkflow
-        }
-    );
-
-    setIsProcessing(false);
-    setMindStatus('idle');
+    try {
+      addToast(`Bắt đầu tự động hóa: ${category}`, 'info');
+      // Delegate Logic to Orchestrator Service
+      await dispatchWorkflow(
+          wfId,
+          category,
+          goal,
+          batchSize,
+          { logoAsset, moodboardAssets, brandUrl, brandInfo },
+          {
+              memory,
+              addMessage,
+              setMessages,
+              onEngineChange,
+              getNextLabel,
+              updateWorkflow
+          }
+      );
+      addToast(`Hoàn tất tự động hóa: ${category}`, 'success');
+    } catch (e: any) {
+      console.error("Automation failed", e);
+      updateWorkflow(wfId, { status: 'failed', name: `Failed: ${e.message || 'Unknown error'}` });
+      addMessage({ role: MessageRole.ASSISTANT, text: `❌ Lỗi khi chạy Automation: ${e.message || 'Lỗi không xác định'}` });
+      addToast(`Lỗi tự động hóa: ${e.message || 'Lỗi không xác định'}`, 'error');
+    } finally {
+      setIsProcessing(false);
+      setMindStatus('idle');
+    }
   };
 
   return { activeWorkflows, setActiveWorkflows, handleAutomationStart, handleConfirmPlan: () => {} };

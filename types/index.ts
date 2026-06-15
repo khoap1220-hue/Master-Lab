@@ -5,6 +5,26 @@ export interface MaturityCriteria {
   feedback: string;
 }
 
+export interface BrandProject {
+  id: string;
+  name: string;
+  imageUrl: string;
+  date: string;
+}
+
+export interface BrandIdentity {
+  id?: string;
+  name?: string;
+  logoUrl?: string;
+  primaryColor?: string;
+  secondaryColor?: string;
+  accentColor?: string;
+  fontFamily?: string;
+  toneOfVoice?: string;
+  projects?: BrandProject[];
+  lastUpdated: string;
+}
+
 export interface MaturityScore {
   totalScore: number;
   grade: 'A+' | 'A' | 'B' | 'C' | 'D';
@@ -27,9 +47,17 @@ export interface BatchJob {
   thumbnailUrl: string;
   status: ProcessStatus;
   resultUrl?: string; 
+  resultBlob?: Blob;
+  resultVideoUrl?: string;
+  resultVideoBlob?: Blob;
   resultJson?: string; 
+  extractedText?: string;
+  checkinPhotos?: string[];
   typeSpecimenUrl?: string; 
   maskUrl?: string; 
+  maskBlob?: Blob;
+  referenceUrls?: string[];
+  referenceBlobs?: Blob[];
   dimensions: { width: number, height: number };
   error?: string;
   tier?: ExecutionTier;
@@ -46,6 +74,15 @@ export interface BatchJob {
   viralScore?: ViralScore;
   videoUrl?: string; 
   campaignData?: AdCampaignData;
+  omniLoraInputs?: {
+    characterRefs: string[];
+    characterProfiles: string;
+    style: string;
+    story: string;
+    characterDNA: string;
+  };
+  modelUsed?: string;
+  state?: any; // Dùng để lưu trạng thái trung gian (checkpoint) cho Granular Retry
 }
 
 export enum MessageRole {
@@ -75,7 +112,13 @@ export type ScenarioCategory =
   | 'Signage'
   | 'Fashion'
   | 'SOP Management'
-  | 'Creative Studio'; 
+  | 'Creative Studio'
+  | 'Interior Design'
+  | 'Character Design'
+  | 'App Icon Design'
+  | '3D Rendering'
+  | 'Vector Art'
+  | 'Cinematic Video'; 
 
 export type AgentRole = 
   | 'MasterOrchestrator' 
@@ -222,6 +265,7 @@ export interface MemoryInsight {
   entities: EntityRecord[];
   coreIntent: string;
   systemAuthorityLevel: number;
+  brandIdentity?: BrandIdentity;
 }
 
 export interface NeuralEvent {
@@ -254,6 +298,7 @@ export interface NeuralTrace {
   memoryAccessed: string[]; 
   adaptationStrategy: string; 
   confidence: number;
+  executionSteps?: string[];
 }
 
 export interface ChatMessage {
@@ -294,6 +339,7 @@ export interface ChatMessage {
   smartActions?: SmartAction[];
   guidedPaths?: GuidedPath[];
   groundingSources?: GroundingSource[];
+  modelUsed?: string; // NEW: Track which model generated this message
 }
 
 export interface TaskLog {
@@ -349,7 +395,7 @@ export interface EditorState {
   isMockupMode?: boolean; 
 }
 
-export type ProcessStatus = 'queued' | 'preprocessing' | 'matting' | 'refining' | 'rescue_queued' | 'rescuing' | 'completed' | 'failed' | 'analyzing_context' | 'placing_neural' | 'decomposing' | 'localizing' | 'vectorizing' | 'refreshing' | 'scripting' | 'rendering_video' | 'visualizing_hooks' | 'drafting_content' | 'rendering_visuals';
+export type ProcessStatus = 'queued' | 'preprocessing' | 'matting' | 'refining' | 'rescue_queued' | 'rescuing' | 'completed' | 'failed' | 'analyzing_context' | 'placing_neural' | 'decomposing' | 'localizing' | 'vectorizing' | 'refreshing' | 'scripting' | 'rendering_video' | 'generating_video' | 'visualizing_hooks' | 'drafting_content' | 'rendering_visuals' | 'processing';
 
 export type ExecutionTier = 'HEAVY' | 'MEDIUM' | 'LIGHT' | 'BATCH' | 'RESCUE';
 
@@ -357,14 +403,18 @@ export interface ExtractedAsset {
   id: string;
   name: string;
   flattenedUrl: string;
+  flattenedBlob?: Blob;
   rebrandedUrl?: string; 
+  rebrandedBlob?: Blob;
   rebrandStatus?: 'pending' | 'processing' | 'completed' | 'failed';
   layeringStatus?: 'pending' | 'processing' | 'completed' | 'failed'; 
   layers: {
     background?: string; 
     typography?: string; 
     graphics?: string; 
+    content?: string; // New field for text content
   };
+  modelUsed?: string;
 }
 
 export type RefreshStrategy = 'SOFT' | 'HARD' | 'HYBRID';
@@ -413,6 +463,8 @@ export interface ViralStoryPlan {
   hook?: string;
   socialPosts?: SocialPost[]; 
   instagramQuotes?: InstaQuote[];
+  modelUsed?: string;
+  duration?: string;
 }
 
 export interface ViralScore {

@@ -4,24 +4,30 @@ import { getAI, callWithRetry } from "../../../lib/gemini";
 import { optimizeImagePayload } from "../../../lib/utils";
 import { executeManagedTask } from "../../../lib/tieredExecutor";
 import { FontStrategy } from "./1_fontStrategist";
+import { MODELS } from "../../../config/models";
 
 export const runStyledTextGenerator = async (
   seedImage: string,
   strategy: FontStrategy,
-  targetText: string
+  targetText: string,
+  localStyle?: string
 ): Promise<{ resultImageUrl: string }> => {
   return executeManagedTask('IMAGE_GEN_4K', async () => {
     const ai = getAI();
-    const generationModel = "gemini-3-pro-image-preview";
-    const backupModel = "gemini-2.5-flash-image";
+    const generationModel = MODELS.IMAGE_PRIMARY;
+    const proModel = MODELS.IMAGE_PRO;
+    const flashModel = MODELS.IMAGE_FAST;
     
     // Optimize input
     const optInput = await optimizeImagePayload(seedImage, 'generation');
+
+    const styleInstruction = localStyle ? `\n      - USER REQUESTED STYLE OVERRIDE: ${localStyle}` : '';
 
     const genPrompt = `
       [SYSTEM ROLE: MASTER TYPOGRAPHY ARTIST]
       
       TASK: Render the specific text "${targetText}" using the EXACT visual style of the Input Image.
+      ${styleInstruction}
       
       INPUT STYLE DNA:
       - Class: ${strategy.classification}
@@ -45,19 +51,29 @@ export const runStyledTextGenerator = async (
             { text: genPrompt }, 
             { inlineData: { mimeType: "image/png", data: optInput.split(',')[1] } } 
         ] },
-        config: { imageConfig: { aspectRatio: "16:9", imageSize: "1K" } } 
-      }), 
-      3, 
-      5000, 
-      generationModel,
-      () => ai.models.generateContent({
-        model: backupModel,
-        contents: { parts: [
-            { text: genPrompt }, 
-            { inlineData: { mimeType: "image/png", data: optInput.split(',')[1] } } 
-        ] },
         config: { imageConfig: { aspectRatio: "16:9" } } 
-      })
+      }), 
+      2, 
+      1000, 
+      generationModel,
+      [
+        () => ai.models.generateContent({
+          model: proModel,
+          contents: { parts: [
+              { text: genPrompt }, 
+              { inlineData: { mimeType: "image/png", data: optInput.split(',')[1] } } 
+          ] },
+          config: { imageConfig: { aspectRatio: "16:9" } } 
+        }),
+        () => ai.models.generateContent({
+          model: flashModel,
+          contents: { parts: [
+              { text: genPrompt }, 
+              { inlineData: { mimeType: "image/png", data: optInput.split(',')[1] } } 
+          ] },
+          config: { imageConfig: { aspectRatio: "16:9" } } 
+        })
+      ]
     );
 
     let resultImage = "";

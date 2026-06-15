@@ -1,7 +1,9 @@
 
-import { Type, GenerateContentResponse } from "@google/genai";
+import { GenerateContentResponse, ThinkingLevel } from "@google/genai";
 import { getAI, callWithRetry } from "../../../../lib/gemini";
 import { cleanJson } from "../../../../services/orchestrator/utils";
+import { UXUI_DESIGN_PROTOCOL } from "../../../../services/prompts";
+import { MODELS } from "../../../../config/models";
 
 /**
  * AI UX DIRECTOR AGENT (Pro-First)
@@ -12,10 +14,10 @@ export const runUXDirector = async (
     platform: string,
     screenCount: number,
     brandVibe: string = ""
-): Promise<{ screens: Array<{ name: string, description: string, uiElements: string[] }> }> => {
+): Promise<{ screens: Array<{ name: string, description: string, uiElements: string[], layout?: string, colorPalette?: string, typography?: string }> }> => {
     const ai = getAI();
-    const primaryModel = "gemini-3.1-pro-preview"; 
-    const fallbackModel = "gemini-3-flash-preview";
+    const primaryModel = MODELS.TEXT_PRIMARY; 
+    const fallbackModel = MODELS.TEXT_FAST;
 
     const prompt = `
         [SYSTEM ROLE: SENIOR PRODUCT MANAGER & UX ARCHITECT]
@@ -29,37 +31,33 @@ export const runUXDirector = async (
         2. DIVERSITY: Don't just list 3 dashboards. Show different states.
         3. DESCRIPTION: Must be detailed enough for a UI Designer to visualize.
         
+        ${UXUI_DESIGN_PROTOCOL}
+
         OUTPUT JSON: 
-        { "screens": [ { "name": "1. Login", "description": "Clean minimal login with social auth...", "uiElements": ["Input field", "Button"] } ] }
+        { 
+            "screens": [ 
+                { 
+                    "name": "1. Login", 
+                    "description": "Clean minimal login with social auth...", 
+                    "uiElements": ["Input field", "Button"],
+                    "layout": "Centered card on split background",
+                    "colorPalette": "Primary brand color for CTA, neutral backgrounds",
+                    "typography": "Large sans-serif headings, legible body text"
+                } 
+            ] 
+        }
     `;
 
     const config = {
-        thinkingConfig: { thinkingBudget: 4096 }, 
-        responseMimeType: "application/json",
-        responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-                screens: {
-                    type: Type.ARRAY,
-                    items: {
-                        type: Type.OBJECT,
-                        properties: {
-                            name: { type: Type.STRING },
-                            description: { type: Type.STRING },
-                            uiElements: { type: Type.ARRAY, items: { type: Type.STRING } }
-                        },
-                        required: ["name", "description"]
-                    }
-                }
-            }
-        }
-    } as any;
+        thinkingConfig: { thinkingLevel: ThinkingLevel.LOW }, 
+        responseMimeType: "application/json"
+    };
 
     try {
         const response = await callWithRetry<GenerateContentResponse>(
             () => ai.models.generateContent({ model: primaryModel, contents: { parts: [{ text: prompt }] }, config }), 
-            2, 2000, 'UX-Director-Pro',
-            () => ai.models.generateContent({ model: fallbackModel, contents: { parts: [{ text: prompt }] }, config })
+            2, 1000, 'UX-Director-Pro',
+            [() => ai.models.generateContent({ model: fallbackModel, contents: { parts: [{ text: prompt }] }, config })]
         );
         return JSON.parse(cleanJson(response.text || "{\"screens\": []}"));
     } catch (e) {

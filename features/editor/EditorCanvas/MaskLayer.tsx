@@ -5,7 +5,7 @@ import { createMaskFromStrokes, createCompositeImage } from '../../../lib/utils'
 
 export interface MaskLayerRef {
   getMask: () => string;
-  getComposite: (originalImage: HTMLImageElement) => string;
+  getComposite: (originalImage: HTMLImageElement | HTMLVideoElement) => string;
   clear: () => void;
   undo: () => void;
   isEmpty: () => boolean;
@@ -44,7 +44,7 @@ const MaskLayer = forwardRef<MaskLayerRef, MaskLayerProps>(({
   
   useImperativeHandle(ref, () => ({
     getMask: () => createMaskFromStrokes(width, height, strokes),
-    getComposite: (originalImage: HTMLImageElement) => createCompositeImage(width, height, strokes, originalImage),
+    getComposite: (originalImage: HTMLImageElement | HTMLVideoElement) => createCompositeImage(width, height, strokes, originalImage),
     clear: () => {
       saveToHistory();
       setStrokes([]);

@@ -5,17 +5,19 @@ import { getAI, callWithRetry } from "../../lib/gemini";
 import { executeManagedTask } from "../../lib/tieredExecutor";
 import { sanitizeAspectRatio, optimizeImagePayload } from "../../lib/utils";
 import { REALISM_ENFORCER } from "../prompts";
+import { MODELS, isProTier } from "../../config/models";
 
 export const enrichRegionForPrint = async (
   imageContent: string,
   maskContent: string,
   compositeContent: string | null,
   memoryInsight: MemoryInsight
-): Promise<{ image: string; text: string }> => {
+): Promise<{ image: string; text: string; model?: string }> => {
   return executeManagedTask('IMAGE_EDIT_COMPLEX', async () => {
     const ai = getAI();
-    const model = "gemini-3-pro-image-preview";
-    const backupModel = "gemini-2.5-flash-image";
+    const model = MODELS.IMAGE_PRIMARY;
+    const proModel = MODELS.IMAGE_PRO;
+    const flashModel = MODELS.IMAGE_FAST;
     
     // SMART PRE-OPTIMIZATION
     const [optImage, optMask] = await Promise.all([
@@ -54,30 +56,55 @@ export const enrichRegionForPrint = async (
       parts.push({ inlineData: { mimeType: "image/png", data: optComposite.split(',')[1] } });
     }
 
-    const response = await callWithRetry<GenerateContentResponse>(
-      () => ai.models.generateContent({
-        model,
-        contents: { parts },
-        config: { imageConfig: { aspectRatio: "1:1", imageSize: "1K" } }
-      }), 
-      5, 
-      2000, 
-      model,
-      () => ai.models.generateContent({
-        model: backupModel,
-        contents: { parts },
-        config: { imageConfig: { aspectRatio: "1:1" } }
-      })
-    );
+    let usedModel: string = model;
+    try {
+        const response = await callWithRetry<GenerateContentResponse>(
+          () => ai.models.generateContent({
+            model,
+            contents: { parts },
+            config: { imageConfig: { aspectRatio: "1:1" } }
+          }), 
+          2, 
+          1000, 
+          model,
+          [
+            () => ai.models.generateContent({
+              model: proModel,
+              contents: { parts },
+              config: { imageConfig: { aspectRatio: "1:1" } }
+            }),
+            () => ai.models.generateContent({
+              model: flashModel,
+              contents: { parts },
+              config: { imageConfig: { aspectRatio: "1:1" } }
+            })
+          ],
+          600000,
+          true,
+          (m) => usedModel = m
+        );
 
-    let image: string | undefined;
-    let text = "";
-    response.candidates?.[0]?.content?.parts?.forEach(part => {
-      if (part.inlineData) image = `data:image/png;base64,${part.inlineData.data}`;
-      else if (part.text) text += part.text;
-    });
-    
-    return { image: image!, text: text.trim() || `Đã tái tạo chi tiết siêu thực (Macro Enhance).` };
+        let image: string | undefined;
+        let text = "";
+        
+        if ((response as any).generatedImages?.[0]?.image?.imageBytes) {
+            image = `data:image/png;base64,${(response as any).generatedImages[0].image.imageBytes}`;
+        }
+        
+        response.candidates?.[0]?.content?.parts?.forEach(part => {
+          if (part.inlineData && !image) image = `data:image/png;base64,${part.inlineData.data}`;
+          else if (part.text) text += part.text;
+        });
+        
+        return { image: image!, text: text.trim() || `Đã tái tạo chi tiết siêu thực (Macro Enhance).`, model: usedModel };
+    } catch (error: any) {
+        if (error.message && error.message.includes('Neural Refusal')) {
+            const contentMatch = error.message.match(/Content:\s*(.*)/);
+            const textContent = contentMatch ? contentMatch[1] : error.message;
+            return { image: '', text: textContent, model: usedModel };
+        }
+        throw error;
+    }
   });
 };
 
@@ -86,11 +113,12 @@ export const recoverDesignFromMockup = async (
   maskContent: string,
   compositeContent: string | null,
   memoryInsight: MemoryInsight
-): Promise<{ image: string; text: string }> => {
+): Promise<{ image: string; text: string; model?: string }> => {
   return executeManagedTask('IMAGE_EDIT_COMPLEX', async () => {
     const ai = getAI();
-    const model = "gemini-3-pro-image-preview";
-    const backupModel = "gemini-2.5-flash-image";
+    const model = MODELS.IMAGE_PRIMARY;
+    const proModel = MODELS.IMAGE_PRO;
+    const flashModel = MODELS.IMAGE_FAST;
     
     const prompt = `[ROLE: PIXELSMITH DESIGN PUBLISHER] Flatten & Publish the graphic inside the MASK. Remove perspective and lighting. Output flat vector-style graphic on White Background.`;
 
@@ -100,39 +128,68 @@ export const recoverDesignFromMockup = async (
         optimizeImagePayload(maskContent, 'masking')
     ]);
 
-    const response = await callWithRetry<GenerateContentResponse>(
-      () => ai.models.generateContent({
-        model,
-        contents: { 
-          parts: [
-            { text: prompt },
-            { inlineData: { mimeType: "image/png", data: optImage.split(',')[1] } },
-            { inlineData: { mimeType: "image/png", data: optMask.split(',')[1] } }
-          ]
-        },
-        config: { imageConfig: { aspectRatio: "1:1", imageSize: "1K" } }
-      }),
-      3,
-      2000,
-      model,
-      () => ai.models.generateContent({
-        model: backupModel,
-        contents: { 
-          parts: [
-            { text: prompt },
-            { inlineData: { mimeType: "image/png", data: optImage.split(',')[1] } },
-            { inlineData: { mimeType: "image/png", data: optMask.split(',')[1] } }
-          ]
-        },
-        config: { imageConfig: { aspectRatio: "1:1" } }
-      })
-    );
+    let usedModel: string = model;
+    try {
+        const response = await callWithRetry<GenerateContentResponse>(
+          () => ai.models.generateContent({
+            model,
+            contents: { 
+              parts: [
+                { text: prompt },
+                { inlineData: { mimeType: "image/png", data: optImage.split(',')[1] } },
+                { inlineData: { mimeType: "image/png", data: optMask.split(',')[1] } }
+              ]
+            },
+            config: { imageConfig: { aspectRatio: "1:1" } }
+          }),
+          2,
+          1000,
+          model,
+          [
+            () => ai.models.generateContent({
+                model: proModel,
+                contents: { 
+                  parts: [
+                    { text: prompt },
+                    { inlineData: { mimeType: "image/png", data: optImage.split(',')[1] } },
+                    { inlineData: { mimeType: "image/png", data: optMask.split(',')[1] } }
+                  ]
+                },
+                config: { imageConfig: { aspectRatio: "1:1" } }
+            }),
+            () => ai.models.generateContent({
+                model: flashModel,
+                contents: { 
+                  parts: [
+                    { text: prompt },
+                    { inlineData: { mimeType: "image/png", data: optImage.split(',')[1] } },
+                    { inlineData: { mimeType: "image/png", data: optMask.split(',')[1] } }
+                  ]
+                },
+                config: { imageConfig: { aspectRatio: "1:1" } }
+            })
+          ],
+          600000,
+          true,
+          (m) => usedModel = m
+        );
 
-    let image: string | undefined;
-    response.candidates?.[0]?.content?.parts?.forEach(part => {
-      if (part.inlineData) image = `data:image/png;base64,${part.inlineData.data}`;
-    });
-    return { image: image!, text: "Bản thiết kế phẳng đã được phục hồi." };
+        let image: string | undefined;
+        if ((response as any).generatedImages?.[0]?.image?.imageBytes) {
+            image = `data:image/png;base64,${(response as any).generatedImages[0].image.imageBytes}`;
+        }
+        response.candidates?.[0]?.content?.parts?.forEach(part => {
+          if (part.inlineData && !image) image = `data:image/png;base64,${part.inlineData.data}`;
+        });
+        return { image: image!, text: "Bản thiết kế phẳng đã được phục hồi.", model: usedModel };
+    } catch (error: any) {
+        if (error.message && error.message.includes('Neural Refusal')) {
+            const contentMatch = error.message.match(/Content:\s*(.*)/);
+            const textContent = contentMatch ? contentMatch[1] : error.message;
+            return { image: '', text: textContent, model: usedModel };
+        }
+        throw error;
+    }
   });
 };
 
@@ -143,8 +200,9 @@ export const scanAndFlattenDocument = async (
 ): Promise<string> => {
   return executeManagedTask('SCAN_PROCESSING', async () => {
     const ai = getAI();
-    const model = "gemini-2.5-flash-image"; // FIXED: Use Image model for image generation tasks
-    const backupModel = "gemini-3-pro-image-preview";
+    const model = MODELS.IMAGE_PRIMARY;
+    const proModel = MODELS.IMAGE_PRO;
+    const flashModel = MODELS.IMAGE_FAST;
     
     // SMART PRE-OPTIMIZATION: Vision Profile (Document scanning doesn't need 4K input usually)
     const optImage = await optimizeImagePayload(imageContent, 'vision');
@@ -162,17 +220,35 @@ export const scanAndFlattenDocument = async (
     
     const validRatio = sanitizeAspectRatio(targetRatio);
 
-    const response = await callWithRetry<GenerateContentResponse>(() => ai.models.generateContent({
-      model,
-      contents: { parts: [{ text: prompt }, { inlineData: { mimeType: "image/png", data: optImage.split(',')[1] } }] },
-      config: { imageConfig: { aspectRatio: validRatio as any } }
-    }), 3, 2000, model, () => ai.models.generateContent({
-        model: backupModel,
-        contents: { parts: [{ text: prompt }, { inlineData: { mimeType: "image/png", data: optImage.split(',')[1] } }] },
-        config: { imageConfig: { aspectRatio: validRatio as any, imageSize: "1K" } }
-    }), 300000);
+    let usedModel: string = model;
+    try {
+        const response = await callWithRetry<GenerateContentResponse>(() => ai.models.generateContent({
+          model,
+          contents: { parts: [{ text: prompt }, { inlineData: { mimeType: "image/png", data: optImage.split(',')[1] } }] },
+          config: { imageConfig: { aspectRatio: validRatio } }
+        }), 2, 1000, model, [
+            () => ai.models.generateContent({
+                model: proModel,
+                contents: { parts: [{ text: prompt }, { inlineData: { mimeType: "image/png", data: optImage.split(',')[1] } }] },
+                config: { imageConfig: { aspectRatio: validRatio } }
+            }),
+            () => ai.models.generateContent({
+                model: flashModel,
+                contents: { parts: [{ text: prompt }, { inlineData: { mimeType: "image/png", data: optImage.split(',')[1] } }] },
+                config: { imageConfig: { aspectRatio: validRatio } }
+            })
+        ], 600000, true, (m) => usedModel = m);
 
-    return `data:image/png;base64,${response.candidates?.[0]?.content?.parts?.find(p => p.inlineData)?.inlineData?.data}`;
+        if ((response as any).generatedImages?.[0]?.image?.imageBytes) {
+            return `data:image/png;base64,${(response as any).generatedImages[0].image.imageBytes}`;
+        }
+        return `data:image/png;base64,${response.candidates?.[0]?.content?.parts?.find(p => p.inlineData)?.inlineData?.data}`;
+    } catch (error: any) {
+        if (error.message && error.message.includes('Neural Refusal')) {
+            throw new Error("Neural Refusal: Không thể scan tài liệu.");
+        }
+        throw error;
+    }
   });
 };
 
@@ -180,36 +256,73 @@ export const upscaleTo4K = async (
   imageContent: string, 
   label: string, 
   aspectRatio: string = "1:1",
-  mode: 'general' | 'document' = 'general'
-): Promise<string> => {
+  targetSize: "2K" | "4K" = "4K"
+): Promise<{ image: string; model: string }> => {
   // Use HEAVY tier but utilizing fallback logic heavily
   return executeManagedTask('UPSCALE_HighFidelity', async () => {
     const ai = getAI();
     const validRatio = sanitizeAspectRatio(aspectRatio);
+    const isPro = isProTier();
+    const imageConfig: any = { aspectRatio: validRatio };
+    
+    // imageSize is typically a Pro feature for Gemini models
+    if (isPro) {
+      imageConfig.imageSize = targetSize;
+    }
 
     // SMART PRE-OPTIMIZATION: Upscale Input Profile
-    // We resize to ~1024px to ensure the model focuses on "Hallucinating details" rather than processing raw pixels.
-    // This dramatically reduces upload latency and inference wait time.
     const optimizedInput = await optimizeImagePayload(imageContent, 'upscale_input');
 
-    // STRATEGY 1: PRO MODEL (True 4K) - Optimized Prompt for lower latency
-    const performPro4K = () => {
+    // STRATEGY 1: 3.1 FLASH (Primary)
+    const performFlash31 = () => {
       const prompt = `
-        [SYSTEM ROLE: 4K UPSCALER]
-        TASK: Upscale [${label}] to 4K resolution.
+        [SYSTEM ROLE: ${targetSize} UPSCALER]
+        TASK: Upscale [${label}] to ${targetSize} resolution.
         ACTION: Denoise, sharpening, texture synthesis.
         OUTPUT: High fidelity photorealistic image.
       `;
       
       return ai.models.generateContent({
-        model: 'gemini-3-pro-image-preview',
+        model: MODELS.IMAGE_PRIMARY,
         contents: { parts: [{ text: prompt }, { inlineData: { mimeType: "image/png", data: optimizedInput.split(',')[1] } }] },
-        config: { imageConfig: { imageSize: "4K", aspectRatio: validRatio as any } }
+        config: { imageConfig }
       });
     };
 
-    // STRATEGY 2: FLASH MODEL (High-Res 2K) - Very Simple Prompt
-    const performFlashBackup = () => {
+    // STRATEGY 2: PRO MODEL (Backup)
+    const performPro3 = () => {
+      const prompt = `
+        [SYSTEM ROLE: ${targetSize} UPSCALER]
+        TASK: Upscale [${label}] to ${targetSize} resolution.
+        ACTION: Denoise, sharpening, texture synthesis.
+        OUTPUT: High fidelity photorealistic image.
+      `;
+      
+      return ai.models.generateContent({
+        model: MODELS.IMAGE_PRO,
+        contents: { parts: [{ text: prompt }, { inlineData: { mimeType: "image/png", data: optimizedInput.split(',')[1] } }] },
+        config: { imageConfig }
+      });
+    };
+
+    // STRATEGY 2.5: 3.1 FLASH (Standard Res Fallback - No 4K)
+    const performFlash31Standard = () => {
+      console.warn("⚠️ 4K Upscale failed or restricted. Falling back to Standard Resolution...");
+      const prompt = `
+        [SYSTEM ROLE: IMAGE ENHANCER]
+        TASK: Restore and Enhance [${label}] with maximum clarity.
+        ACTION: Denoise and Sharpen edges.
+      `;
+      
+      return ai.models.generateContent({
+        model: MODELS.IMAGE_PRIMARY,
+        contents: { parts: [{ text: prompt }, { inlineData: { mimeType: "image/png", data: optimizedInput.split(',')[1] } }] },
+        config: { imageConfig: { aspectRatio: validRatio } }
+      });
+    };
+
+    // STRATEGY 3: FLASH 2.5 MODEL (High-Res 2K)
+    const performFlash25 = () => {
       console.warn("⚠️ Switching to Flash Engine for stable upscaling...");
       const prompt = `
         [SYSTEM ROLE: IMAGE ENHANCER]
@@ -218,26 +331,38 @@ export const upscaleTo4K = async (
       `;
 
       return ai.models.generateContent({
-        model: 'gemini-2.5-flash-image',
+        model: MODELS.IMAGE_FAST,
         contents: { parts: [{ text: prompt }, { inlineData: { mimeType: "image/png", data: optimizedInput.split(',')[1] } }] },
-        config: { imageConfig: { aspectRatio: validRatio as any } } // No imageSize param for Flash
+        config: { imageConfig: { aspectRatio: validRatio } } // No imageSize param for Flash
       });
     };
 
     // Execute with Fallback Chain
-    // REDUCED RETRIES on Pro to 1 to fail fast and switch to Flash immediately on congestion.
-    const response = await callWithRetry<GenerateContentResponse>(
-      performPro4K, 
-      1, 
-      1000, 
-      'Gemini-3-Pro-4K', 
-      [performFlashBackup],
-      120000 // 2 Minutes Timeout
-    );
+    let usedModel = 'Gemini-3.1-Flash-Image';
+    try {
+        const response = await callWithRetry<GenerateContentResponse>(
+          performFlash31, 
+          1, 
+          1000, 
+          'Gemini-3.1-Flash-Image', 
+          [performPro3, performFlash31Standard, performFlash25],
+          150000, // 2.5 Minutes Timeout
+          true,
+          (m) => usedModel = m
+        );
 
-    const resultData = response.candidates?.[0]?.content?.parts?.find(p => p.inlineData)?.inlineData?.data;
-    if (!resultData) throw new Error("Upscaling returned no image data.");
-    
-    return `data:image/png;base64,${resultData}`;
+        let resultData = (response as any).generatedImages?.[0]?.image?.imageBytes;
+        if (!resultData) {
+            resultData = response.candidates?.[0]?.content?.parts?.find(p => p.inlineData)?.inlineData?.data;
+        }
+        if (!resultData) throw new Error("Upscaling returned no image data.");
+        
+        return { image: `data:image/png;base64,${resultData}`, model: usedModel };
+    } catch (error: any) {
+        if (error.message && error.message.includes('Neural Refusal')) {
+            throw new Error("Neural Refusal: Không thể upscale ảnh.");
+        }
+        throw error;
+    }
   });
 };

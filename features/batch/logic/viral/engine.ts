@@ -1,16 +1,17 @@
 
-import { Type, GenerateContentResponse } from "@google/genai";
+import { GenerateContentResponse, ThinkingLevel } from "@google/genai";
 import { ViralStoryPlan, ViralScore } from "../../../../types";
 import { getAI, callWithRetry } from "../../../../lib/gemini";
 import { cleanJson } from "../../../../services/orchestrator/utils";
 import { executeManagedTask } from "../../../../lib/tieredExecutor";
 import { optimizeImagePayload } from "../../../../lib/utils";
-import { loadMemoryFromLocal } from "../../../../services/memoryService";
-import { LANGUAGE_PROTOCOL } from "../../../../services/prompts";
+
+import { LANGUAGE_PROTOCOL, VIRAL_STORY_PROTOCOL, SAFE_VISUAL_PROTOCOL } from "../../../../services/prompts";
+import { MODELS } from "../../../../config/models";
 
 /**
- * ENGINE: OMNICHANNEL VIRAL STRATEGIST (v5.6 - Pro-First Edition)
- * Prioritizes gemini-3.1-pro-preview for deep creativity, fallbacks to gemini-3-flash-preview.
+ * ENGINE: OMNICHANNEL VIRAL STRATEGIST (v6.0 - Omni-Intelligence Edition)
+ * Prioritizes TEXT_PRIMARY for deep creativity, fallbacks to TEXT_FAST.
  */
 export const runViralEngine = async (
     baseStory: string,
@@ -23,116 +24,58 @@ export const runViralEngine = async (
     return executeManagedTask('STRATEGY_PLANNING', async () => {
         const ai = getAI();
         // PRIORITY: PRO -> FLASH
-        const primaryModel = "gemini-3.1-pro-preview"; 
-        const fallbackModel = "gemini-3-flash-preview";
+        const primaryModel = MODELS.TEXT_PRIMARY; 
+        const fallbackModel = MODELS.TEXT_FAST;
 
         const optImage = imageUrl ? await optimizeImagePayload(imageUrl, 'vision') : null;
         
         const prompt = `
-            [SYSTEM: OMNICHANNEL CONTENT FACTORY v5.6]
-            [ROLE]: Creative Director specializing in Viral Growth.
+            [SYSTEM: OMNICHANNEL CONTENT FACTORY v6.0 - OMNI-INTELLIGENCE]
+            [ROLE]: Elite Creative Director & Viral Growth Hacker.
+            [OBJECTIVE]: Engineer a high-retention, algorithm-optimized viral content ecosystem.
             
-            INPUT: "${baseStory}"
-            BRAND DNA: "${brandDNA}"
-            PLATFORM: ${platform} (${duration})
-            ${optImage ? "- VISUAL: Attached product image." : ""}
+            INPUT STORY/CONCEPT: "${baseStory}"
+            BRAND DNA & TONE: "${brandDNA}"
+            TARGET PLATFORM: ${platform}
+            TARGET DURATION: ${duration}
+            ${optImage ? "- VISUAL CONTEXT: Attached product/reference image." : ""}
 
             TASK:
-            1. ANALYZE: Extract Hook & Tone from input.
-            2. GENERATE: 2 Scripts, 1 Post, 3 Quotes.
-            3. OUTPUT: Valid JSON ONLY.
+            1. DECONSTRUCT: Analyze the input to find the "Viral Core" (Emotion, Utility, or Shock Value).
+            2. HOOK ENGINEERING: Create 3 distinct, high-converting hooks (First 3 seconds).
+            3. SCRIPTING: Develop a fast-paced, visually dynamic script with precise audio/visual cues.
+               - IMPORTANT: The sum of duration of the shots in your returned list MUST equal the TARGET DURATION.
+               - For target duration "10s": Generate exactly 1 Hook shot (represented by the user's selected hook of 5s) and 1 Body or Ending shot (duration 5s), totaling exactly 10 seconds.
+               - For target duration "15s": Generate exactly 3 shots of 5s each (1 Hook, 1 Body, 1 Ending), totaling 15 seconds.
+               - Each shot's duration in "shots" MUST be strictly 5 seconds to ensure compatibility with standard 5-second video synthesis blocks.
+            4. OMNICHANNEL EXPANSION: Generate platform-native social copy and highly shareable quote graphics.
+            5. STRICT OUTPUT: Return ONLY valid JSON matching the schema. No markdown formatting outside of JSON.
+            6. NO TEXT OVERLAYS: The "visual_prompt" for each shot MUST NOT include any instructions to render text, titles, or subtitles on the video. The video should be pure cinematic visuals.
 
             ${LANGUAGE_PROTOCOL}
+            ${SAFE_VISUAL_PROTOCOL}
+            ${VIRAL_STORY_PROTOCOL}
 
             --- JSON SCHEMA ---
             {
                 "plan": {
                     "hookVariants": [
-                        { "id": "H1", "title": "Variant Name", "pattern": "POV/ASMR", "script": "Audio...", "visual_prompt": "Visual..." }
+                        { "id": "H1", "title": "Variant Name", "pattern": "POV/ASMR/Educational", "script": "Audio script...", "visual_prompt": "Detailed visual description..." }
                     ],
                     "socialPosts": [
-                        { "platform": "Social", "content": "Text...", "hashtags": ["#tag"] }
+                        { "platform": "Social", "content": "Engaging text with emojis...", "hashtags": ["#tag1", "#tag2"] }
                     ],
                     "instagramQuotes": [
-                        { "text": "Quote...", "style": "Design Style" }
+                        { "text": "Punchy, shareable quote...", "style": "Minimalist/Bold/Elegant" }
                     ],
                     "shots": [
-                        { "shot_id": "S2", "role": "Body", "duration": 8, "visual_prompt": "...", "audio_script": "...", "viral_tech": "Tech" },
-                        { "shot_id": "S3", "role": "Ending", "duration": 4, "visual_prompt": "...", "audio_script": "...", "viral_tech": "CTA" }
+                        { "shot_id": "S2", "role": "Body", "duration": 8, "visual_prompt": "Cinematic shot description...", "audio_script": "Voiceover/Text...", "viral_tech": "Pacing/Pattern Interrupt" },
+                        { "shot_id": "S3", "role": "Ending", "duration": 4, "visual_prompt": "Call to action visual...", "audio_script": "CTA audio...", "viral_tech": "Loop/CTA" }
                     ]
                 },
-                "score": { "hookStrength": 80, "retentionLogic": 80, "sharePotential": 80, "totalScore": 80, "notes": "AI Feedback." }
+                "score": { "hookStrength": 95, "retentionLogic": 90, "sharePotential": 85, "totalScore": 90, "notes": "Strategic analysis of why this will go viral." }
             }
         `;
-
-        const responseSchema = {
-            type: Type.OBJECT,
-            properties: {
-                plan: {
-                    type: Type.OBJECT,
-                    properties: {
-                        hookVariants: {
-                            type: Type.ARRAY,
-                            items: {
-                                type: Type.OBJECT,
-                                properties: {
-                                    id: { type: Type.STRING },
-                                    title: { type: Type.STRING },
-                                    pattern: { type: Type.STRING },
-                                    script: { type: Type.STRING },
-                                    visual_prompt: { type: Type.STRING }
-                                }
-                            }
-                        },
-                        socialPosts: {
-                            type: Type.ARRAY,
-                            items: {
-                                type: Type.OBJECT,
-                                properties: {
-                                    platform: { type: Type.STRING },
-                                    content: { type: Type.STRING },
-                                    hashtags: { type: Type.ARRAY, items: { type: Type.STRING } }
-                                }
-                            }
-                        },
-                        instagramQuotes: {
-                            type: Type.ARRAY,
-                            items: {
-                                type: Type.OBJECT,
-                                properties: {
-                                    text: { type: Type.STRING },
-                                    style: { type: Type.STRING }
-                                }
-                            }
-                        },
-                        shots: {
-                            type: Type.ARRAY,
-                            items: {
-                                type: Type.OBJECT,
-                                properties: {
-                                    shot_id: { type: Type.STRING },
-                                    role: { type: Type.STRING },
-                                    duration: { type: Type.NUMBER },
-                                    visual_prompt: { type: Type.STRING },
-                                    audio_script: { type: Type.STRING },
-                                    viral_tech: { type: Type.STRING }
-                                }
-                            }
-                        }
-                    }
-                },
-                score: {
-                    type: Type.OBJECT,
-                    properties: {
-                        hookStrength: { type: Type.NUMBER },
-                        retentionLogic: { type: Type.NUMBER },
-                        sharePotential: { type: Type.NUMBER },
-                        totalScore: { type: Type.NUMBER },
-                        notes: { type: Type.STRING }
-                    }
-                }
-            }
-        };
 
         const parts: any[] = [{ text: prompt }];
         if (optImage) {
@@ -145,29 +88,19 @@ export const runViralEngine = async (
                     model: primaryModel,
                     contents: { parts },
                     config: {
-                        thinkingConfig: { thinkingBudget: 4096 }, // Add thinking for Pro
-                        responseMimeType: "application/json",
-                        responseSchema: responseSchema as any
+                        thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } // Add thinking for Pro
                     }
-                }), 
-                2, 2000, 'Viral-Engine-Pro',
+                }),
+                2, 1000, primaryModel,
                 [
-                  () => ai.models.generateContent({
-                      model: fallbackModel,
-                      contents: { parts },
-                      config: {
-                          responseMimeType: "application/json",
-                          responseSchema: responseSchema as any
-                      }
-                  }),
-                  () => ai.models.generateContent({ // Final emergency fallback
-                      model: "gemini-3-flash-preview",
-                      contents: { parts },
-                      config: {
-                          responseMimeType: "application/json",
-                          responseSchema: responseSchema as any
-                      }
-                  })
+                    () => ai.models.generateContent({ // Fallback to Flash
+                        model: fallbackModel,
+                        contents: { parts }
+                    }),
+                    () => ai.models.generateContent({ // Final emergency fallback
+                        model: MODELS.TEXT_FAST,
+                        contents: { parts }
+                    })
                 ]
             );
 

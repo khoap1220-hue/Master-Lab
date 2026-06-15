@@ -3,6 +3,7 @@ import { Type, GenerateContentResponse } from "@google/genai";
 import { getAI, callWithRetry } from "../../lib/gemini";
 import { cleanJson } from "../orchestrator/utils";
 import { optimizeImagePayload } from "../../lib/utils";
+import { MODELS } from "../../config/models";
 
 // --- TYPES ---
 export interface PackagingStyle {
@@ -48,8 +49,8 @@ export interface SurfacePlan {
 // --- AGENT 1: VISION EXTRACTOR & OCR ---
 export const extractPackagingStyle = async (imageContent: string): Promise<PackagingStyle> => {
   const ai = getAI();
-  const primaryModel = "gemini-3-flash-preview"; 
-  const backupModel = "gemini-3-flash-preview";
+  const primaryModel = MODELS.TEXT_FAST; 
+  const backupModel = MODELS.TEXT_FAST;
 
   // Use slightly higher resolution for OCR
   const optImage = await optimizeImagePayload(imageContent, 'generation');
@@ -77,41 +78,20 @@ export const extractPackagingStyle = async (imageContent: string): Promise<Packa
   `;
 
   const config = {
-    responseMimeType: "application/json",
-    responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-            colorPalette: { type: Type.ARRAY, items: { type: Type.STRING } },
-            typography: { type: Type.OBJECT, properties: { primary: { type: Type.STRING }, secondary: { type: Type.STRING } } },
-            vibeKeywords: { type: Type.ARRAY, items: { type: Type.STRING } },
-            patternMotif: { type: Type.STRING },
-            textContent: {
-                type: Type.OBJECT,
-                properties: {
-                    brandName: { type: Type.STRING },
-                    productName: { type: Type.STRING },
-                    slogans: { type: Type.ARRAY, items: { type: Type.STRING } },
-                    netWeight: { type: Type.STRING },
-                    certifications: { type: Type.ARRAY, items: { type: Type.STRING } }
-                },
-                required: ["brandName", "productName"]
-            }
-        },
-        required: ["colorPalette", "textContent"]
-    }
+    responseMimeType: "application/json"
   };
 
   const response = await callWithRetry<GenerateContentResponse>(
     () => ai.models.generateContent({
       model: primaryModel,
       contents: { parts: [{ text: prompt }, { inlineData: { mimeType: "image/png", data: optImage.split(',')[1] } }] },
-      config: config as any
-    }), 3, 2000, primaryModel,
-    () => ai.models.generateContent({
+      config
+    }), 2, 1000, primaryModel,
+    [() => ai.models.generateContent({
       model: backupModel,
       contents: { parts: [{ text: prompt }, { inlineData: { mimeType: "image/png", data: optImage.split(',')[1] } }] },
-      config: config as any
-    })
+      config
+    })]
   );
 
   return JSON.parse(cleanJson(response.text || "{}"));
@@ -124,8 +104,8 @@ export const composeSurfacePlan = async (
   productContext: string
 ): Promise<SurfacePlan> => {
   const ai = getAI();
-  const primaryModel = "gemini-3-flash-preview"; 
-  const backupModel = "gemini-3-flash-preview";
+  const primaryModel = MODELS.TEXT_FAST; 
+  const backupModel = MODELS.TEXT_FAST;
 
   const prompt = `
     [ROLE: PACKAGING STRUCTURAL DESIGNER]
@@ -171,31 +151,23 @@ export const composeSurfacePlan = async (
   };
 
   const config = { 
-      responseMimeType: "application/json",
-      responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-              front: panelSchema, back: panelSchema, left: panelSchema, right: panelSchema,
-              top: panelSchema, bottom: panelSchema, flaps: panelSchema
-          },
-          required: ["front", "back", "left", "right", "top", "bottom", "flaps"]
-      }
+      responseMimeType: "application/json"
   };
 
   const response = await callWithRetry<GenerateContentResponse>(
     () => ai.models.generateContent({
       model: primaryModel,
       contents: { parts: [{ text: prompt }] },
-      config: config as any
+      config
     }), 
-    3, 
-    2000, 
+    2, 
+    1000, 
     primaryModel,
-    () => ai.models.generateContent({
+    [() => ai.models.generateContent({
       model: backupModel,
       contents: { parts: [{ text: prompt }] },
-      config: config as any
-    }),
+      config
+    })],
     45000
   );
 

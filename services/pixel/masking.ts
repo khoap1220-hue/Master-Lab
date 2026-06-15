@@ -4,18 +4,20 @@ import { MemoryInsight } from "../../types";
 import { getAI, callWithRetry } from "../../lib/gemini";
 import { getClosestAspectRatio, optimizeImagePayload } from "../../lib/utils";
 import { executeManagedTask } from "../../lib/tieredExecutor"; 
+import { MODELS } from "../../config/models";
 
 // HEAVY TASK: Subject Isolation (High Velocity Migration)
 export const isolateSubject = async (
   imageContent: string,
   imageLabel: string,
   memoryInsight: MemoryInsight
-): Promise<{ image: string; text: string }> => {
+): Promise<{ image: string; text: string; model?: string }> => {
   return executeManagedTask('IMAGE_EDIT_COMPLEX', async () => {
     const ai = getAI();
     // UPGRADE: Use Pro Image for better edge detection
-    const model = "gemini-3-pro-image-preview"; 
-    const backupModel = "gemini-2.5-flash-image";
+    const model = MODELS.IMAGE_PRIMARY; 
+    const proModel = MODELS.IMAGE_PRO;
+    const flashModel = MODELS.IMAGE_FAST;
     
     const ratio = await getClosestAspectRatio(imageContent);
     
@@ -40,34 +42,56 @@ export const isolateSubject = async (
       { inlineData: { mimeType: "image/png", data: optImage.split(',')[1] } }
     ];
 
-    const response = await callWithRetry<GenerateContentResponse>(() => ai.models.generateContent({
-      model,
-      contents: { parts },
-      config: { imageConfig: { aspectRatio: ratio as any, imageSize: "1K" } }
-    }), 3, 2000, model, () => ai.models.generateContent({
-        model: backupModel,
-        contents: { parts },
-        config: { imageConfig: { aspectRatio: ratio as any } }
-    }));
+    let usedModel: string = model;
+    try {
+        const response = await callWithRetry<GenerateContentResponse>(() => ai.models.generateContent({
+          model,
+          contents: { parts },
+          config: { imageConfig: { aspectRatio: ratio } }
+        }), 2, 1000, model, [
+            () => ai.models.generateContent({
+                model: proModel,
+                contents: { parts },
+                config: { imageConfig: { aspectRatio: ratio } }
+            }),
+            () => ai.models.generateContent({
+                model: flashModel,
+                contents: { parts },
+                config: { imageConfig: { aspectRatio: ratio } }
+            })
+        ], 600000, true, (m) => usedModel = m);
 
-    let image: string | undefined;
-    let text = "";
-    
-    if (response.candidates?.[0]?.content?.parts) {
-      response.candidates[0].content.parts.forEach(part => {
-        if (part.inlineData) image = `data:image/png;base64,${part.inlineData.data}`;
-        else if (part.text) text += part.text;
-      });
-    }
+        let image: string | undefined;
+        let text = "";
+        
+        if ((response as any).generatedImages?.[0]?.image?.imageBytes) {
+            image = `data:image/png;base64,${(response as any).generatedImages[0].image.imageBytes}`;
+        }
+        
+        if (response.candidates?.[0]?.content?.parts) {
+          response.candidates[0].content.parts.forEach(part => {
+            if (part.inlineData && !image) image = `data:image/png;base64,${part.inlineData.data}`;
+            else if (part.text) text += part.text;
+          });
+        }
 
-    if (!image) {
-      throw new Error("Không thể tách nền: Gemini không trả về hình ảnh.");
+        if (!image) {
+          throw new Error("Không thể tách nền: Gemini không trả về hình ảnh.");
+        }
+        
+        return { 
+          image: image, 
+          text: text.trim() || "Chủ thể đã được tách nền (White Matte).",
+          model: usedModel
+        };
+    } catch (error: any) {
+        if (error.message && error.message.includes('Neural Refusal')) {
+            const contentMatch = error.message.match(/Content:\s*(.*)/);
+            const textContent = contentMatch ? contentMatch[1] : error.message;
+            return { image: '', text: textContent, model: usedModel };
+        }
+        throw error;
     }
-    
-    return { 
-      image: image, 
-      text: text.trim() || "Chủ thể đã được tách nền (White Matte)." 
-    };
   });
 };
 
@@ -78,7 +102,9 @@ export const generateSegmentationMask = async (
 ): Promise<string> => {
   return executeManagedTask('MASKING_SMART', async () => {
     const ai = getAI();
-    const model = "gemini-2.5-flash-image"; // FIXED: Use Image model for image generation
+    const model = MODELS.IMAGE_PRIMARY;
+    const proModel = MODELS.IMAGE_PRO;
+    const flashModel = MODELS.IMAGE_FAST;
     const ratio = await getClosestAspectRatio(imageContent);
     
     // SMART PRE-OPTIMIZATION: Masking Profile (Higher Res allowed)
@@ -97,26 +123,47 @@ export const generateSegmentationMask = async (
       - IGNORE internal contrast. Only separate the object from the external environment.
     `;
 
-    const response = await callWithRetry<GenerateContentResponse>(() => ai.models.generateContent({
-      model,
-      contents: { 
-        parts: [
-          { text: prompt },
-          { inlineData: { mimeType: "image/png", data: optImage.split(',')[1] } }
-        ]
-      },
-      config: { imageConfig: { aspectRatio: ratio as any } }
-    }), 3, 2000, model);
+    try {
+        const response = await callWithRetry<GenerateContentResponse>(() => ai.models.generateContent({
+          model,
+          contents: { 
+            parts: [
+              { text: prompt },
+              { inlineData: { mimeType: "image/png", data: optImage.split(',')[1] } }
+            ]
+          },
+          config: { imageConfig: { aspectRatio: ratio } }
+        }), 2, 1000, model, [
+            () => ai.models.generateContent({
+                model: proModel,
+                contents: { parts: [{ text: prompt }, { inlineData: { mimeType: "image/png", data: optImage.split(',')[1] } }] },
+                config: { imageConfig: { aspectRatio: ratio } }
+            }),
+            () => ai.models.generateContent({
+                model: flashModel,
+                contents: { parts: [{ text: prompt }, { inlineData: { mimeType: "image/png", data: optImage.split(',')[1] } }] },
+                config: { imageConfig: { aspectRatio: ratio } }
+            })
+        ], 600000, true);
 
-    let image: string | undefined;
-    if (response.candidates?.[0]?.content?.parts) {
-      response.candidates[0].content.parts.forEach(part => {
-        if (part.inlineData) image = `data:image/png;base64,${part.inlineData.data}`;
-      });
+        let image: string | undefined;
+        if ((response as any).generatedImages?.[0]?.image?.imageBytes) {
+            image = `data:image/png;base64,${(response as any).generatedImages[0].image.imageBytes}`;
+        }
+        if (response.candidates?.[0]?.content?.parts) {
+          response.candidates[0].content.parts.forEach(part => {
+            if (part.inlineData && !image) image = `data:image/png;base64,${part.inlineData.data}`;
+          });
+        }
+
+        if (!image) throw new Error("Mask generation failed.");
+        return image;
+    } catch (error: any) {
+        if (error.message && error.message.includes('Neural Refusal')) {
+            throw new Error("Neural Refusal: Không thể tạo mask.");
+        }
+        throw error;
     }
-
-    if (!image) throw new Error("Mask generation failed.");
-    return image;
   });
 };
 
@@ -126,11 +173,12 @@ export const extractNeuralStudio = async (
   maskContent: string,
   compositeContent: string | null,
   memoryInsight: MemoryInsight
-): Promise<{ image: string; text: string }> => {
+): Promise<{ image: string; text: string; model?: string }> => {
   return executeManagedTask('SCAN_PROCESSING', async () => {
     const ai = getAI();
-    const model = "gemini-3-pro-image-preview";
-    const backupModel = "gemini-2.5-flash-image";
+    const model = MODELS.IMAGE_PRIMARY;
+    const proModel = MODELS.IMAGE_PRO;
+    const flashModel = MODELS.IMAGE_FAST;
     
     const ratio = await getClosestAspectRatio(imageContent);
     
@@ -171,36 +219,64 @@ export const extractNeuralStudio = async (
       parts.push({ inlineData: { mimeType: "image/png", data: optComposite.split(',')[1] } });
     }
 
-    const response = await callWithRetry<GenerateContentResponse>(
-      () => ai.models.generateContent({
-        model,
-        contents: { parts },
-        config: { 
-          imageConfig: { aspectRatio: ratio as any, imageSize: "1K" }
-        }
-      }), 
-      5, 
-      2000, 
-      model,
-      () => ai.models.generateContent({
-        model: backupModel,
-        contents: { parts },
-        config: { 
-          imageConfig: { aspectRatio: ratio as any }
-        }
-      })
-    );
+    let usedModel: string = model;
+    try {
+        const response = await callWithRetry<GenerateContentResponse>(
+          () => ai.models.generateContent({
+            model,
+            contents: { parts },
+            config: { 
+              imageConfig: { aspectRatio: ratio }
+            }
+          }), 
+          2, 
+          1000, 
+          model,
+          [
+            () => ai.models.generateContent({
+                model: proModel,
+                contents: { parts },
+                config: { 
+                  imageConfig: { aspectRatio: ratio }
+                }
+            }),
+            () => ai.models.generateContent({
+                model: flashModel,
+                contents: { parts },
+                config: { 
+                  imageConfig: { aspectRatio: ratio }
+                }
+            })
+          ],
+          600000,
+          true,
+          (m) => usedModel = m
+        );
 
-    let image: string | undefined;
-    let text = "";
-    response.candidates?.[0]?.content?.parts?.forEach(part => {
-      if (part.inlineData) image = `data:image/png;base64,${part.inlineData.data}`;
-      else if (part.text) text += part.text;
-    });
-    
-    return { 
-      image: image!, 
-      text: text.trim() || `Đối tượng đã được Scan, Nắn phẳng và Tách nền (Smart Scan).` 
-    };
+        let image: string | undefined;
+        let text = "";
+        
+        if ((response as any).generatedImages?.[0]?.image?.imageBytes) {
+            image = `data:image/png;base64,${(response as any).generatedImages[0].image.imageBytes}`;
+        }
+        
+        response.candidates?.[0]?.content?.parts?.forEach(part => {
+          if (part.inlineData && !image) image = `data:image/png;base64,${part.inlineData.data}`;
+          else if (part.text) text += part.text;
+        });
+        
+        return { 
+          image: image!, 
+          text: text.trim() || `Đối tượng đã được Scan, Nắn phẳng và Tách nền (Smart Scan).`,
+          model: usedModel
+        };
+    } catch (error: any) {
+        if (error.message && error.message.includes('Neural Refusal')) {
+            const contentMatch = error.message.match(/Content:\s*(.*)/);
+            const textContent = contentMatch ? contentMatch[1] : error.message;
+            return { image: '', text: textContent, model: usedModel };
+        }
+        throw error;
+    }
   });
 };

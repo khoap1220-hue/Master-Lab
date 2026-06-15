@@ -82,7 +82,7 @@ const EditorCanvas: React.FC<EditorCanvasProps> = ({ state, onClose, onApply, av
   if (!state.isOpen || !state.image) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/98 flex flex-col items-center justify-center p-4 backdrop-blur-xl animate-in fade-in duration-300">
+    <div className="fixed inset-0 z-50 bg-zinc-950/98 flex flex-col items-center justify-center p-4 backdrop-blur-xl animate-in fade-in duration-300">
       <div className="w-full max-w-6xl flex flex-col h-full relative">
         
         <EditorHeader mode={mode} onClose={onClose} />
@@ -90,6 +90,7 @@ const EditorCanvas: React.FC<EditorCanvasProps> = ({ state, onClose, onApply, av
         <CanvasViewport 
           ref={viewportRef}
           image={state.image}
+          isVideo={state.isVideo}
           mode={mode}
           brushSize={brushSize}
           onAddPin={handleAddPin}

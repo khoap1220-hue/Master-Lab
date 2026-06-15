@@ -2,13 +2,43 @@
   "project_identity": "Visual Empathy Assistant",
   "history": [
     {
+      "version": "11.2.0",
+      "date": "2026-03-12",
+      "codename": "Agentic-Workflow",
+      "logs": [
+        "ENGINE: Intelligent Pipeline - Nâng cấp luồng tự động hóa thành Pipeline 4 bước: Deep Research -> Strategic Planning -> Pre-Audit -> Context-Aware Execution.",
+        "ARCH: Strategic Auto-Routing - Tự động định tuyến yêu cầu đến đúng Agent chuyên gia (Logo, Packaging, Marketing, UX/UI) để lập kế hoạch.",
+        "CORE: Pre-Audit System - Chấm điểm độ trưởng thành (Maturity Score) của bản chiến lược trước khi tốn tài nguyên render ảnh.",
+        "VISUAL: Context-Aware Execution - Tự động chèn Mode Modifiers vào prompt để đảm bảo tính nhất quán và đa dạng trong Batch Generation."
+      ]
+    },
+    {
+      "version": "11.1.0",
+      "date": "2026-02-28",
+      "codename": "UX-Flow-Evolution",
+      "logs": [
+        "ENGINE: UX Flow Parallel Processing - Nâng cấp tốc độ tạo màn hình UX/UI bằng cơ chế xử lý song song (Parallel Batching).",
+        "UX: Dynamic Aspect Ratio - Hỗ trợ tỷ lệ khung hình động cho UX Flow Card, hiển thị chuẩn xác Web Dashboard (16:9) thay vì chỉ Mobile (9:16).",
+        "ARCH: UX Director Upgrade - Agent UX Director xuất chi tiết Layout, Color Palette, và Typography để tăng độ chính xác khi render UI.",
+        "CORE: Robust Error Handling - Thêm cơ chế bắt lỗi từng màn hình độc lập, không làm sập toàn bộ tiến trình UX Flow."
+      ]
+    },
+    {
       "version": "11.0.0",
       "date": "2026-02-22",
       "codename": "Omni-Intelligence",
       "logs": [
         "RELEASE: Omni-Intelligence - Phiên bản hoàn thiện tích hợp toàn diện Gemini 3.1 Pro và Gemini 3 Flash.",
         "UX: API Key Setup - Thêm nút thiết lập API Key trực tiếp trên thanh công cụ.",
-        "LIVE: Device Error Handling - Xử lý mượt mà lỗi không tìm thấy thiết bị Microphone trong Live Mode."
+        "LIVE: Device Error Handling - Xử lý mượt mà lỗi không tìm thấy thiết bị Microphone trong Live Mode.",
+        "DOCS: System Usage Guide - Bổ sung cẩm nang hướng dẫn sử dụng tối đa tính năng hệ thống vào thư mục system.",
+        "ARCH: Smart Inference Protocol - Module hóa giao thức suy luận thông minh, tự động điền context cho input ngắn.",
+        "DOCS: Product Document Upgrade - Nâng cấp hệ thống tạo tài liệu sản phẩm (PRD/FRD) với khả năng tự động suy luận thông số kỹ thuật và cấu trúc chuẩn.",
+        "CORE: Stability Upgrade - Tích hợp cơ chế Fallback đa tầng (Pro -> Flash -> 2.5) để xử lý lỗi 503 High Demand tự động.",
+        "UX: Neural Trace - Hiển thị chi tiết các bước thực thi (Execution Steps) trong Neural Logic Trace để tăng tính minh bạch.",
+        "AI: Context Enrichment - Tự động làm giàu ngữ cảnh từ lịch sử chat giúp AI hiểu ý định người dùng tốt hơn.",
+        "LIVE: Smart Status - Hiển thị trạng thái Đang nghe/Đang nói trực quan trong Live Mode dựa trên phân tích âm thanh thời gian thực.",
+        "RELEASE: Omni-Intelligence v8.8 - Tối ưu hóa toàn diện: Smart Context, Live Feedback & Design Intent Recognition."
       ]
     },
     {

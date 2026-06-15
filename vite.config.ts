@@ -35,20 +35,6 @@ export default defineConfig(({ mode }) => {
       minify: 'esbuild',
       rollupOptions: {
         output: {
-          manualChunks: {
-            'vendor-react': ['react', 'react-dom'],
-            'vendor-gemini': ['@google/genai'],
-            'vendor-utils': ['jspdf', 'jszip', 'opentype.js'],
-            // Split heavy feature components into separate chunks
-            'feature-editor': [
-              './features/editor/EditorCanvas/index.tsx',
-              './features/editor/EditorCanvas/MaskLayer.tsx'
-            ],
-            'feature-batch': [
-              './features/batch/BatchStudio.tsx',
-              './features/batch/components/BatchPreview.tsx'
-            ]
-          }
         }
       }
     },

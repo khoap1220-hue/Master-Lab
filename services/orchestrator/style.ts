@@ -1,9 +1,10 @@
 
-import { GenerateContentResponse, Type } from "@google/genai";
-import { MemoryInsight, GroundingSource } from "../../types";
+import { GenerateContentResponse } from "@google/genai";
+import { GroundingSource } from "../../types";
 import { getAI, callWithRetry } from "../../lib/gemini";
 import { executeManagedTask } from "../../lib/tieredExecutor";
 import { cleanJson } from "./utils";
+import { MODELS } from "../../config/models";
 
 /**
  * Style Transfer Analysis
@@ -18,8 +19,8 @@ export const planStyleTransfer = async (
 }> => {
   return executeManagedTask('ANALYSIS_DEEP', async () => {
     const ai = getAI();
-    const model = "gemini-3.1-pro-preview";
-    const backupModel = "gemini-3-flash-preview";
+    const model = MODELS.TEXT_PRIMARY;
+    const backupModel = MODELS.TEXT_FAST;
 
     const prompt = `
       VAI TRÒ: CHUYÊN GIA PHÂN TÍCH PHONG CÁCH NGHỆ THUẬT (ART HISTORIAN / STYLE CRITIC).
@@ -38,16 +39,8 @@ export const planStyleTransfer = async (
     `;
 
     const config = {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            visualPrompt: { type: Type.STRING },
-            structuredBrief: { type: Type.STRING }
-          },
-          required: ["visualPrompt", "structuredBrief"]
-        }
-    } as any;
+        responseMimeType: "application/json"
+    };
 
     const response = await callWithRetry<GenerateContentResponse>(
       () => ai.models.generateContent({
@@ -55,14 +48,14 @@ export const planStyleTransfer = async (
         contents: { parts: [{ text: prompt }] },
         config
       }),
-      3,
-      2000,
+      2,
+      1000,
       model,
-      () => ai.models.generateContent({
+      [() => ai.models.generateContent({
         model: backupModel,
         contents: { parts: [{ text: prompt }] },
         config
-      })
+      })]
     );
 
     const data = JSON.parse(cleanJson(response.text || "{}"));
@@ -72,5 +65,39 @@ export const planStyleTransfer = async (
       structuredBrief: data.structuredBrief,
       sources: []
     };
+  });
+};
+
+/**
+ * Generate Style Specs (Artistic DNA, Palette)
+ */
+export const generateStyleSpecs = async (
+  designContext: string
+): Promise<string> => {
+  return executeManagedTask('REPORTING', async () => {
+    const ai = getAI();
+    const model = MODELS.TEXT_PRIMARY;
+    const backupModel = MODELS.TEXT_FAST;
+
+    const prompt = `
+      VAI TRÒ: GIÁM ĐỐC NGHỆ THUẬT (ART DIRECTOR).
+      NHIỆM VỤ: Lập hồ sơ đặc tả phong cách nghệ thuật cho: "${designContext}".
+      
+      YÊU CẦU ĐẦU RA (MARKDOWN TIẾNG VIỆT):
+      1. **ARTISTIC DNA:** Phân tích các yếu tố cốt lõi tạo nên phong cách.
+      2. **COLOR PALETTE:** Bảng màu chi tiết (Hex codes) và ý nghĩa.
+      3. **TEXTURE & BRUSHWORK:** Các đặc điểm về chất liệu, nét vẽ, bề mặt.
+      4. **LIGHTING & ATMOSPHERE:** Cách xử lý ánh sáng và bầu không khí.
+    `;
+
+    const response = await callWithRetry<GenerateContentResponse>(
+      () => ai.models.generateContent({ model, contents: { parts: [{ text: prompt }] } }),
+      2,
+      1000,
+      model,
+      () => ai.models.generateContent({ model: backupModel, contents: { parts: [{ text: prompt }] } })
+    );
+
+    return response.text || "Đã lập hồ sơ đặc tả phong cách.";
   });
 };

@@ -1,5 +1,8 @@
 
-import { AgentRole } from "../types";
+
+
+import { isProTier } from '../config/models';
+import { getKeyPool } from './keyManager';
 
 // --- TITAN VELOCITY KERNEL (v10.0.0 - UNLEASHED) ---
 // Hệ thống điều phối tác vụ hiệu năng cao dựa trên phần cứng.
@@ -23,47 +26,55 @@ console.log(`[TITAN CORE] Hardware Detected: ${LOGICAL_CORES} Logical Cores.`);
 console.log(`[TITAN CORE] Mode: ${IS_ULTRA_PERFORMANCE ? 'GOD_SPEED' : IS_HIGH_PERFORMANCE ? 'TURBO' : 'STANDARD'}`);
 
 // 2. DYNAMIC CONFIGURATION (Cấu hình động - Bão hòa phần cứng)
-export const EXECUTION_TIERS: Record<ExecutionTier, TierConfig> = {
-  HEAVY: { 
-    id: 'HEAVY', 
-    // Ultra: 4 concurrent heavy tasks (Pro Vision). High: 3. Std: 2.
-    concurrency: IS_ULTRA_PERFORMANCE ? 4 : (IS_HIGH_PERFORMANCE ? 3 : 2), 
-    tierDelay: IS_HIGH_PERFORMANCE ? 50 : 200, // Minimal delay for high-end
-    timeout: 600000, // 10 mins for heavy rendering
-    label: 'PRO CORE (TITAN)' 
-  },
-  MEDIUM: { 
-    id: 'MEDIUM', 
-    // Scale aggressively with cores
-    concurrency: Math.max(4, LOGICAL_CORES), 
-    tierDelay: IS_HIGH_PERFORMANCE ? 20 : 100, 
-    timeout: 300000, 
-    label: 'FLASH CORE (VELOCITY)' 
-  },
-  LIGHT: { 
-    id: 'LIGHT', 
-    // Massive parallelism for chat/analysis/logic. 
-    concurrency: Math.min(64, LOGICAL_CORES * 4), 
-    tierDelay: 0, // ZERO DELAY for light tasks
-    timeout: 60000, 
-    label: 'LITE CORE (INSTANT)' 
-  },
-  BATCH: {
-    id: 'BATCH',
-    // Batch engine scales linearly with cores for maximum throughput
-    concurrency: Math.max(6, Math.floor(LOGICAL_CORES * 1.5)), 
-    tierDelay: IS_HIGH_PERFORMANCE ? 100 : 500, 
-    timeout: 900000, // 15 mins for massive batches
-    label: 'BATCH ENGINE (SATURATION)'
-  },
-  RESCUE: { 
-    id: 'RESCUE', 
-    concurrency: 2, 
-    tierDelay: 2000, 
-    timeout: 240000, 
-    label: 'RESCUE SQUAD' 
-  }
+// OPTIMIZATION: Reduce concurrency and increase delays for free tier to prevent rate limits
+export const getExecutionTiers = (): Record<ExecutionTier, TierConfig> => {
+  const isPro = isProTier();
+  const poolSize = getKeyPool().length;
+  
+  // Scale concurrency for free tier if they have a pool
+  // Max concurrency for free pool is capped to prevent overall system abuse
+  const poolBonus = !isPro && poolSize > 1 ? Math.min(5, Math.floor(poolSize / 1.5)) : 0;
+
+  return {
+    HEAVY: { 
+      id: 'HEAVY', 
+      concurrency: isPro ? (IS_ULTRA_PERFORMANCE ? 4 : (IS_HIGH_PERFORMANCE ? 3 : 2)) : (1 + poolBonus), 
+      tierDelay: isPro ? (IS_HIGH_PERFORMANCE ? 50 : 200) : (poolBonus > 0 ? 500 : 1000),
+      timeout: 1500000, 
+      label: 'PRO CORE (TITAN)' 
+    },
+    MEDIUM: { 
+      id: 'MEDIUM', 
+      concurrency: isPro ? Math.max(4, LOGICAL_CORES) : (2 + poolBonus), 
+      tierDelay: isPro ? (IS_HIGH_PERFORMANCE ? 20 : 100) : (poolBonus > 0 ? 300 : 500), 
+      timeout: 600000, 
+      label: 'FLASH CORE (VELOCITY)' 
+    },
+    LIGHT: { 
+      id: 'LIGHT', 
+      concurrency: isPro ? Math.min(64, LOGICAL_CORES * 4) : (4 + poolBonus * 2), 
+      tierDelay: isPro ? 0 : (poolBonus > 0 ? 100 : 200),
+      timeout: 120000, 
+      label: 'LITE CORE (INSTANT)' 
+    },
+    BATCH: {
+      id: 'BATCH',
+      concurrency: isPro ? Math.max(6, Math.floor(LOGICAL_CORES * 1.5)) : (2 + poolBonus), 
+      tierDelay: isPro ? (IS_HIGH_PERFORMANCE ? 100 : 500) : (poolBonus > 0 ? 1000 : 2000), 
+      timeout: 1800000, 
+      label: 'BATCH ENGINE (SATURATION)'
+    },
+    RESCUE: { 
+      id: 'RESCUE', 
+      concurrency: isPro ? 2 : 1, 
+      tierDelay: isPro ? 2000 : 4000, 
+      timeout: 600000, 
+      label: 'RESCUE SQUAD' 
+    }
+  };
 };
+
+export const EXECUTION_TIERS = getExecutionTiers();
 
 export type TaskType = 
   | 'ANALYSIS_DEEP' 
@@ -82,7 +93,9 @@ export type TaskType =
   | 'MEMORY_DISTILL'
   | 'BRAINSTORMING'
   | 'NAMING_CREATION'
-  | 'COPYWRITING_FAST';
+  | 'COPYWRITING_FAST'
+  | 'CREATIVE_WRITING'
+  | 'VIDEO_GEN';
 
 // Optimized Routing for Speed
 const ROUTING_MATRIX: Record<TaskType, ExecutionTier> = {
@@ -94,10 +107,12 @@ const ROUTING_MATRIX: Record<TaskType, ExecutionTier> = {
   'UPSCALE_HighFidelity': 'HEAVY',
   'SCAN_PROCESSING': 'HEAVY', 
   'BLUEPRINT_DECOMPOSITION': 'HEAVY',
+  'VIDEO_GEN': 'RESCUE', // Video generation is extremely heavy and slow
   'IMAGE_GEN_BATCH': 'BATCH', 
   'IMAGE_GEN_FAST': 'MEDIUM',
   'MASKING_SMART': 'MEDIUM', 
   'COPYWRITING_FAST': 'MEDIUM', // Upgraded to MEDIUM to allow 5 mins timeout
+  'CREATIVE_WRITING': 'MEDIUM', // New Task Type
   'ANALYSIS_FAST': 'MEDIUM', // Upgraded to MEDIUM to allow 5 mins timeout for intent analysis
   'REPORTING': 'LIGHT',
   'MEMORY_DISTILL': 'LIGHT',
@@ -154,8 +169,9 @@ class TieredExecutor {
     // Process high priority tiers first
     const tiers: ExecutionTier[] = ['RESCUE', 'LIGHT', 'MEDIUM', 'HEAVY', 'BATCH'];
     
-    // Non-blocking loop via RAF to allow UI updates between dispatches
-    requestAnimationFrame(() => {
+    // Non-blocking loop via setTimeout to allow UI updates between dispatches
+    // and prevent throttling when the browser tab is in the background.
+    setTimeout(() => {
         tiers.forEach(tier => {
             // Attempt to dispatch as many as possible up to concurrency limit
             // Titan Mode: Dispatch MULTIPLE tasks in one frame if slots available
@@ -163,7 +179,7 @@ class TieredExecutor {
                 this.dispatchTask(tier);
             }
         });
-    });
+    }, 0);
   }
 
   private canDispatchImmediate(tier: ExecutionTier): boolean {
